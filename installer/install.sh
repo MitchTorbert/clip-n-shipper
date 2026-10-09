@@ -124,5 +124,5 @@ fi
 
 say "All done!  (version $VERSION)"
 echo "Next: quit Premiere if it's open, then open it again."
-echo "Find the panel under  Window ▸ Extensions ▸ Clip-n-Shipper."
+echo "Find the panel in the Window menu, under UXP Plugins (or Extensions) ▸ Clip-n-Shipper."
 echo "To update later, just run this installer again."

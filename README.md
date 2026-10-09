@@ -14,7 +14,7 @@ curl -fsSL https://github.com/MitchTorbert/clip-n-shipper/releases/latest/downlo
 ```
 
 It takes a few minutes. When it says "All done", quit Premiere and open it again. The panel is under
-**Window ▸ Extensions ▸ Clip-n-Shipper**.
+**Window ▸ UXP Plugins ▸ Clip-n-Shipper** (or under Extensions).
 
 **To update:** run the same line again. **To remove it:** run
 `curl -fsSL https://github.com/MitchTorbert/clip-n-shipper/releases/latest/download/uninstall.sh | bash`
