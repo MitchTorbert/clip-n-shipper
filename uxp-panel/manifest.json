@@ -1,0 +1,105 @@
+{
+  "id": "com.clipnship.panel",
+  "name": "Clip-n-Shipper",
+  "version": "1.0.0",
+  "main": "index.html",
+  "host": {
+    "app": "premierepro",
+    "minVersion": "25.1.0"
+  },
+  "manifestVersion": 5,
+  "requiredPermissions": {
+    "network": {
+      "domains": [
+        "http://localhost:8934",
+        "http://127.0.0.1:8934"
+      ]
+    }
+  },
+  "entrypoints": [
+    {
+      "id": "clipnship",
+      "type": "panel",
+      "minimumSize": {
+        "width": 320,
+        "height": 480
+      },
+      "maximumSize": {
+        "width": 900,
+        "height": 1400
+      },
+      "preferredDockedSize": {
+        "width": 380,
+        "height": 640
+      },
+      "preferredFloatingSize": {
+        "width": 400,
+        "height": 680
+      },
+      "label": {
+        "default": "Clip-n-Shipper"
+      },
+      "icons": [
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/dark.svg",
+          "scale": [
+            1,
+            2
+          ],
+          "theme": [
+            "darkest",
+            "dark",
+            "medium"
+          ]
+        },
+        {
+          "width": 23,
+          "height": 23,
+          "path": "icons/light.svg",
+          "scale": [
+            1,
+            2
+          ],
+          "theme": [
+            "lightest",
+            "light"
+          ]
+        }
+      ],
+      "menuItems": [
+        {
+          "id": "viewSetup",
+          "label": "Setup"
+        },
+        {
+          "id": "viewPills",
+          "label": "Pill Generator"
+        }
+      ]
+    }
+  ],
+  "icons": [
+    {
+      "width": 48,
+      "height": 48,
+      "path": "icons/plugin-icon.svg",
+      "scale": [
+        1,
+        2
+      ],
+      "theme": [
+        "darkest",
+        "dark",
+        "medium",
+        "lightest",
+        "light",
+        "all"
+      ],
+      "species": [
+        "pluginList"
+      ]
+    }
+  ]
+}

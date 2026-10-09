@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+Install Helper Auto-Start.command
+Remove Helper Auto-Start.command

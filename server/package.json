@@ -1,0 +1,11 @@
+{
+  "type": "commonjs",
+  "dependencies": {
+    "@tensorflow-models/blazeface": "^0.1.0",
+    "@tensorflow-models/body-segmentation": "^1.0.2",
+    "@tensorflow/tfjs": "^4.22.0",
+    "jpeg-js": "^0.4.4",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0"
+  }
+}
