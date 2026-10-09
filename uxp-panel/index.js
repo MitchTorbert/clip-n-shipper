@@ -251,14 +251,22 @@ function isClipUrl(url) {
   );
 }
 
+// Mac paths use "/" and Windows paths use "\\" (C:\\Users\\Ed\\Project.prproj), so both are understood.
+function lastSeparator(filePath) {
+  return Math.max(filePath.lastIndexOf("/"), filePath.lastIndexOf("\\"));
+}
 function dirname(filePath) {
-  const idx = filePath.lastIndexOf("/");
+  const idx = lastSeparator(filePath);
   return idx >= 0 ? filePath.slice(0, idx) : filePath;
 }
-
 function basename(filePath) {
-  const idx = filePath.lastIndexOf("/");
+  const idx = lastSeparator(filePath);
   return idx >= 0 ? filePath.slice(idx + 1) : filePath;
+}
+// A file inside a folder, joined with the separator that folder already uses.
+function joinPath(dir, name) {
+  const sep = dir.includes("\\") && !dir.includes("/") ? "\\" : "/";
+  return dir.replace(/[\\/]+$/, "") + sep + name;
 }
 
 // ---- crop math ----
@@ -2425,7 +2433,7 @@ onClick(queueBtn, async () => {
     say(`Queueing ${chosen.length} sequence(s) to Media Encoder → ${render.rendersDir}`);
     let queued = 0;
     for (const sequence of chosen) {
-      const outFile = `${render.rendersDir}/${fileSafe(sequence.name)}.mp4`;
+      const outFile = joinPath(render.rendersDir, `${fileSafe(sequence.name)}.mp4`);
       try {
         const ok = await encoder.exportSequence(sequence, ppro.Constants.ExportType.QUEUE_TO_AME, outFile, render.preset, true);
         if (ok === false || ok === undefined) {

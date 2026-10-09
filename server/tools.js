@@ -8,12 +8,7 @@
 const fs = require("fs");
 const path = require("path");
 
-const EXTRA_DIRS = [
-  "/opt/homebrew/bin", // Homebrew on Apple Silicon
-  "/usr/local/bin", // Homebrew on Intel
-  "/usr/bin",
-  "/bin",
-];
+const { exeNames, pathDirs, extraToolDirs } = require("./platform");
 
 // A Mac set up by the installer keeps its own copies here (no Homebrew needed).
 function bundledBinDir() {
@@ -32,8 +27,12 @@ function fromNpm(name) {
 }
 
 function resolveTool(name) {
-  const own = bundledBinDir() && path.join(bundledBinDir(), name);
-  if (own && fs.existsSync(own)) return own;
+  if (bundledBinDir()) {
+    for (const file of exeNames(name)) {
+      const own = path.join(bundledBinDir(), file);
+      if (fs.existsSync(own)) return own;
+    }
+  }
   const found = resolveOnPath(name);
   if (found) return found;
   const npm = fromNpm(name);
@@ -41,16 +40,15 @@ function resolveTool(name) {
 }
 
 function resolveOnPath(name) {
-  const pathDirs = (process.env.PATH || "").split(":").filter(Boolean);
-  const searchDirs = [...pathDirs, ...EXTRA_DIRS];
+  const searchDirs = [...pathDirs(), ...extraToolDirs()];
   for (const dir of searchDirs) {
-    const candidate = path.join(dir, name);
-    try {
-      if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) {
-        return candidate;
+    for (const file of exeNames(name)) {
+      const candidate = path.join(dir, file);
+      try {
+        if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
+      } catch (e) {
+        // ignore and keep looking
       }
-    } catch (e) {
-      // ignore and keep looking
     }
   }
   return null;

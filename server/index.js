@@ -18,6 +18,7 @@ const { findCaptions } = require("./captionDetect");
 const { renderPill, pillFps } = require("./pill");
 const { refreshIfStale } = require("./ambassadors");
 const { runHealth } = require("./health");
+const platform = require("./platform");
 
 const PORT = Number(process.env.CNS_PORT) || 8934;
 const PILL_SERVICE_URL = "https://pill-generator-262830497959.us-central1.run.app";
@@ -38,27 +39,9 @@ const FOLDER_NAMES = {
   renders: "05 Renders",
 };
 
-// Premiere's standard H.264 preset ("Match Source - High bitrate"), looked up in
-// the installed Premiere / Media Encoder (newest first) so it follows updates.
-function findH264Preset() {
-  let names = [];
-  try {
-    names = fs.readdirSync("/Applications");
-  } catch (e) {
-    return null;
-  }
-  const year = (n) => parseInt((n.match(/(\d{4})$/) || [0, 0])[1], 10);
-  const byYearDesc = (a, b) => year(b) - year(a);
-  const apps = [
-    ...names.filter((n) => /^Adobe Premiere Pro \d{4}$/.test(n)).sort(byYearDesc),
-    ...names.filter((n) => /^Adobe Media Encoder \d{4}$/.test(n)).sort(byYearDesc),
-  ];
-  for (const n of apps) {
-    const file = path.join("/Applications", n, `${n}.app`, "Contents", "MediaIO", "systempresets", "4E49434B_48323634", "00 - Match Source - High bitrate.epr");
-    if (fs.existsSync(file)) return file;
-  }
-  return null;
-}
+// Premiere's standard H.264 preset ("Match Source - High bitrate"), looked up in the
+// installed Premiere / Media Encoder (newest first) so it follows updates.
+const findH264Preset = () => platform.findH264Preset();
 
 // Twitch Ambassador logins (lowercase), from assets/ambassadors.txt, so the panel can tick the Ambassador box.
 function readAmbassadors() {
@@ -474,7 +457,7 @@ const server = http.createServer(async (req, res) => {
       sendJson(res, 400, { error: "Unknown link." });
       return;
     }
-    require("child_process").execFile("open", [target], () => {});
+    platform.openLink(target);
     sendJson(res, 200, { ok: true });
     return;
   }
@@ -529,7 +512,7 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "POST" && url.pathname === "/open-pill-generator") {
     // Fixed address only: this never opens anything the panel sends.
-    require("child_process").execFile("open", ["https://pill-generator-262830497959.us-central1.run.app/"], () => {});
+    platform.openLink("https://pill-generator-262830497959.us-central1.run.app/");
     sendJson(res, 200, { ok: true });
     return;
   }
