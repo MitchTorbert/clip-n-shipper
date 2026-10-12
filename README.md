@@ -55,5 +55,6 @@ accept the panel, double-click **Clip-n-Shipper.ccx** on your Desktop and Creati
 - Footer → **Report an Issue** sends a report to the team.
 
 ## Making a release
-`bash installer/build-release.sh` builds `dist/` (the `.ccx` panel, the helper zip, and the Mac and Windows
+Change the number in `VERSION` and push to main; GitHub builds and publishes the release by itself
+(`.github/workflows/release.yml`). To build by hand: `bash installer/build-release.sh` builds `dist/` (the `.ccx` panel, the helper zip, and the Mac and Windows
 installers and uninstallers). Publish those six files on a GitHub release; both installers always fetch the latest.

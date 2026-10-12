@@ -26,8 +26,9 @@ background for clips with no facecam, pills on V3+). It can also queue sequences
 - `WINDOWS_PORT.md` the Windows work: READ THIS FIRST if you're on a PC.
 
 ## Release process
-`bash installer/build-release.sh` -> `dist/`; publish with `gh release create/upload` on
-MitchTorbert/clip-n-shipper. Editors run a one-line installer; updating = running it again.
+Bump `VERSION` and push to main: the GitHub Action `.github/workflows/release.yml` runs
+`installer/build-release.sh` and publishes release `v<VERSION>` (marked latest) by itself. Editors run a
+one-line installer; updating = running it again. (Claude sessions can push but can't create releases directly.)
 
 ## Things that bit us
 - The panel says "helper out of date" when more than one helper is running or the files changed after

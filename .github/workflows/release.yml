@@ -1,0 +1,54 @@
+# Publishes a GitHub release automatically. Whenever main is updated and the version in
+# VERSION doesn't have a release yet, this builds the six release files
+# (installer/build-release.sh) and publishes them as "v<VERSION>", marked latest.
+# Editors' one-line installers always fetch the latest release.
+#
+# To ship an update: change VERSION (e.g. 1.1.0 -> 1.2.0) and push to main.
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Read version
+        id: v
+        run: echo "tag=v$(tr -d '[:space:]' < VERSION)" >> "$GITHUB_OUTPUT"
+
+      - name: Skip if this version is already released
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh release view "${{ steps.v.outputs.tag }}" >/dev/null 2>&1; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.v.outputs.tag }} is already released; nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build release files
+        if: steps.check.outputs.exists == 'false'
+        run: bash installer/build-release.sh
+
+      - name: Publish release
+        if: steps.check.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ steps.v.outputs.tag }}" \
+            --target "${{ github.sha }}" \
+            --title "${{ steps.v.outputs.tag }}" \
+            --latest \
+            --notes "Install or update. Mac (Terminal): \`curl -fsSL https://github.com/${{ github.repository }}/releases/latest/download/install.sh | bash\` · Windows (PowerShell): \`irm https://github.com/${{ github.repository }}/releases/latest/download/install.ps1 | iex\`" \
+            dist/clip-n-shipper-panel.ccx dist/clip-n-shipper-helper.zip \
+            dist/install.sh dist/uninstall.sh dist/install.ps1 dist/uninstall.ps1
