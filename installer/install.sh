@@ -27,6 +27,31 @@ case "$(uname -m)" in
   *) fail "Unknown Mac type $(uname -m)" ;;
 esac
 
+# A double-click "Update" icon on the Desktop, so nobody has to paste the line again.
+write_update_shortcut() {
+  local target="${CNS_SHORTCUT_DIR:-$HOME/Desktop}/Update Clip-n-Shipper.command"
+  [ -d "$(dirname "$target")" ] || return 0
+  cat > "$target" <<'SHORTCUT'
+#!/bin/bash
+# Double-click this to update Clip-n-Shipper to the newest version.
+REPO="MitchTorbert/clip-n-shipper"
+HOME_DIR="$HOME/Library/Application Support/Clip-n-Shipper"
+have="$(cat "$HOME_DIR/app/VERSION" 2>/dev/null || echo none)"
+latest="$(curl -fsSIL -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null | sed 's|.*/tag/v||')"
+echo "Clip-n-Shipper: you have v$have, the newest is v${latest:-?}."
+if [ -n "$latest" ] && [ "$have" = "$latest" ]; then
+  echo "You're already up to date. Nothing to do."
+else
+  curl -fsSL "https://github.com/$REPO/releases/latest/download/install.sh" | bash
+fi
+echo
+read -n 1 -s -r -p "Press any key to close this window."
+SHORTCUT
+  chmod +x "$target"
+}
+
+if [ "${CNS_SHORTCUT_ONLY:-}" = "1" ]; then write_update_shortcut; echo "Update icon written."; exit 0; fi
+
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 fetch() { # fetch <file-name> <destination>   (a local release folder can stand in for the web, for testing)
@@ -110,6 +135,9 @@ PLISTEOF
   launchctl bootstrap "gui/$(id -u)" "$PLIST" || fail "couldn't start the helper"
 fi
 
+# Leave an Update icon on the Desktop (not when testing into a custom folder).
+[ -z "${CNS_HOME:-}" ] && write_update_shortcut
+
 say "5/5  Checking that the helper is up…"
 if [ "${CNS_SKIP_AGENT:-}" = "1" ]; then
   echo "(skipped)"
@@ -125,4 +153,4 @@ fi
 say "All done!  (version $VERSION)"
 echo "Next: quit Premiere if it's open, then open it again."
 echo "Find the panel in the Window menu, under UXP Plugins (or Extensions) ▸ Clip-n-Shipper."
-echo "To update later, just run this installer again."
+echo "To update later, double-click  Update Clip-n-Shipper  on your Desktop."

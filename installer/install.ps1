@@ -218,6 +218,20 @@ while ($true) {
       Start-Process -FilePath $PowerShell -WindowStyle Hidden -ArgumentList @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden', '-File', "`"$Runner`"")
     }
 
+    # Leave an Update icon on the Desktop (not when testing into a custom folder).
+    if (-not $env:CNS_HOME) {
+      try {
+        $updateText = @"
+@echo off
+echo Updating Clip-n-Shipper...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "irm https://github.com/$Repo/releases/latest/download/install.ps1 | iex"
+echo.
+pause
+"@
+        Set-Content -LiteralPath (Join-Path $Desktop 'Update Clip-n-Shipper.cmd') -Value $updateText -Encoding ASCII
+      } catch { }
+    }
+
     Say '5/5  Checking that the helper is up...'
     if ($env:CNS_SKIP_AGENT -eq '1') {
       Write-Host '(skipped)'
@@ -231,7 +245,7 @@ while ($true) {
     Say "All done!  (version $Version)"
     Write-Host 'Next: quit Premiere if it is open, then open it again.'
     Write-Host 'Find the panel in the Window menu, under UXP Plugins (or Extensions) > Clip-n-Shipper.'
-    Write-Host 'To update later, just run this installer again.'
+    Write-Host 'To update later, double-click  Update Clip-n-Shipper  on your Desktop.'
   }
   catch {
     $msg = $_.Exception.Message -replace '^CNS: ', ''
