@@ -111,6 +111,13 @@
       font-family: inherit;
       font-size: 12px;
     }
+    /* Windows only: Premiere's Windows text box keeps its own height, so the Mac's
+       top/bottom padding pushed the text half out of view. */
+    /* Windows only: the busy text ("Setting up... (1/2)") made Set Up Project wider than
+       its spot, and Reset ended up drawn on top of it. Fixed width, one line. */
+    body.win .actions { display: flex; flex-direction: row; align-items: center; }
+    body.win #setupBtn { width: 175px; min-width: 175px; padding: 10px 8px; box-sizing: border-box; white-space: nowrap; overflow: hidden; }
+    body.win input.text { padding-top: 0; padding-bottom: 0; height: 30px; line-height: normal; }
     .clip-row {
       display: flex;
       flex-direction: row;

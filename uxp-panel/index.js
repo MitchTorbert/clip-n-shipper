@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b30";
+const BUILD = "b36";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -43,6 +43,14 @@ try {
 } catch (e) {
   // not available; the build number alone is fine
 }
+// Windows-only look fixes live in index.html under "body.win"; the Mac never gets this class.
+let isWindows = false;
+try {
+  isWindows = require("os").platform() === "win32";
+} catch (e) {
+  isWindows = /^win/i.test((typeof navigator !== "undefined" && navigator.platform) || "");
+}
+if (isWindows) document.body.className = (document.body.className + " win").trim();
 document.getElementById("build").textContent = "build " + BUILD + (premiereVersion ? " · Premiere " + premiereVersion : "");
 
 // Progress chatter goes to the developer console only. Anything the user needs to know
@@ -64,6 +72,12 @@ function setStatus(msg, cls) {
 
 // Buttons are plain divs: UXP's built-in <button> draws its own pill-shaped
 // outline that fights our rounded corners, so we style everything ourselves.
+// Windows draws the 3x PNG aspect-ratio icons unevenly at its display scales (top and
+// left edges look thicker), so it gets vector copies of the same icons instead.
+function sizeIconSrc(icon, color) {
+  return isWindows ? `icons/win/ar_${icon}_${color}.svg` : `icons/ar_${icon}_${color}.png`;
+}
+
 function iconImg(src, className) {
   const img = el("img", className || "btn-icon");
   img.setAttribute("src", src);
@@ -117,7 +131,29 @@ function setEnabled(node, enabled) {
 // Premiere's panel sometimes drops the first "click" (the one that also moves
 // focus out of a text box), so react to the mouse-down as well and make sure
 // one physical click only ever counts once.
+//
+// Windows: there the text boxes are native Windows controls, and while one has the cursor the
+// first click anywhere else in the panel only takes focus back and never arrives (pill name ->
+// color circle needed two clicks). So when the mouse reaches something clickable and nobody has
+// typed for a moment, the text box lets go of the cursor first and the click lands.
+let lastTypedAt = 0;
+if (isWindows) {
+  document.addEventListener("keydown", () => (lastTypedAt = Date.now()), true);
+  document.addEventListener("input", () => (lastTypedAt = Date.now()), true);
+  document.addEventListener("focus", () => (lastTypedAt = Date.now()), true); // just clicked into a box: give it a moment
+}
+function releaseTextFocus() {
+  const active = document.activeElement;
+  if (!active || active.tagName !== "INPUT" || active.type === "checkbox") return;
+  if (Date.now() - lastTypedAt < 800) return;
+  try {
+    active.blur();
+  } catch (e) {
+    // nothing to let go of
+  }
+}
 function onClick(node, handler) {
+  if (isWindows) node.addEventListener("mouseenter", releaseTextFocus);
   let lastFired = 0;
   const fire = () => {
     const now = Date.now();
@@ -162,10 +198,21 @@ async function startJob(clips, projectDir, detectFacecam, alreadyPilled, clearFo
 // Returns the manifest, or null if the job was stopped.
 async function pollJob(jobId, onLogLine) {
   let linesShown = 0;
+  let missedPolls = 0;
   while (true) {
     await sleep(1500);
-    const res = await fetch(HELPER_BASE + "/status/" + jobId);
-    const job = await res.json();
+    let job;
+    try {
+      const res = await fetch(HELPER_BASE + "/status/" + jobId);
+      job = await res.json();
+      missedPolls = 0;
+    } catch (e) {
+      // Windows: the helper can be too busy (face detection) to answer for a while.
+      // Keep waiting up to about 3 minutes before calling it a failure. The Mac fails at once as before.
+      if (!isWindows || ++missedPolls > 120) throw e;
+      if (stopRequested) return null;
+      continue;
+    }
     for (; linesShown < job.log.length; linesShown++) onLogLine(job.log[linesShown]);
     if (job.status === "done") return job.manifest;
     if (job.status === "cancelled" || stopRequested) return null;
@@ -608,13 +655,46 @@ async function placePill(project, sequence, pillItem, timeSeconds, videoTrackInd
   if (!success) throw new Error("Premiere rejected placing the pill");
 }
 
-async function buildSequence(project, seq) {
+// Standard frame rates, and Premiere's exact ticks per frame for each (254016000000 ticks a second).
+const STANDARD_FPS = [23.976, 24, 25, 29.97, 30, 50, 59.94, 60];
+const TICKS_PER_SECOND = 254016000000;
+function ticksPerFrame(fps) {
+  const ntsc = { 23.976: 24, 29.97: 30, 59.94: 60 }[fps];
+  return ntsc ? Math.round((TICKS_PER_SECOND * 1001) / (ntsc * 1000)) : Math.round(TICKS_PER_SECOND / fps);
+}
+
+// The sequence frame rate for a set of clips: each clip's rate snapped to the nearest standard
+// one, then the lowest of them when they're mixed. Null when no clip says.
+function sequenceFpsFor(clips) {
+  const rates = clips
+    .map((c) => Number(c.fps))
+    .filter((f) => Number.isFinite(f) && f > 1)
+    .map((f) => STANDARD_FPS.reduce((a, b) => (Math.abs(b - f) < Math.abs(a - f) ? b : a)));
+  return rates.length ? Math.min(...rates) : null;
+}
+
+async function buildSequence(project, seq, fps) {
   const sequence = await project.createSequence(seq.name);
   const settings = await sequence.getSettings();
   const rect = new ppro.RectF();
   rect.width = seq.width;
   rect.height = seq.height;
   await settings.setVideoFrameRect(rect);
+  // Match the footage instead of Premiere's default preset (Premiere 26.2+; older builds keep the default).
+  if (fps && typeof settings.setVideoFrameRate === "function" && ppro.FrameRate && typeof ppro.FrameRate.createWithValue === "function") {
+    try {
+      const rate = ppro.FrameRate.createWithValue(fps);
+      try {
+        rate.ticksPerFrame = ticksPerFrame(fps); // exact NTSC rates (23.976 etc.)
+      } catch (e) {
+        // read-only on this build; createWithValue's own rate is close enough
+      }
+      await settings.setVideoFrameRate(rate);
+      log(`Sequence frame rate set to ${fps} fps to match the footage.`);
+    } catch (e) {
+      log(`Couldn't set the sequence frame rate (${e && e.message ? e.message : e}); it uses Premiere's default.`, "warn", true);
+    }
+  }
 
   let success = false;
   project.lockedAccess(() => {
@@ -841,7 +921,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
   }
 
   log(`Creating sequence "${seq.name}" at ${seq.width}x${seq.height}…`);
-  const sequence = await buildSequence(project, seq);
+  const sequence = await buildSequence(project, seq, sequenceFpsFor(okClips));
 
   let t = 0;
   for (const clip of okClips) {
@@ -899,7 +979,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
       const guessed = fc.edges ? Object.values(fc.edges).filter((h) => h === "guess").length : 0;
       if (guessed >= 2) flag("warn", "Facecam edges guessed");
       if (capCrop && fc.y + fc.height > 1 - capCrop) flag("warn", "Facecam near captions");
-    } else if (useBlur && !seq.blurBackground && clip.facecam && clip.facecam.reason && !/no face seen|no duration|no frames/i.test(clip.facecam.reason)) {
+    } else if (useBlur && !seq.blurBackground && clip.facecam && clip.facecam.reason && !/no face seen|no duration|no frames|full-screen camera|IRL camera/i.test(clip.facecam.reason)) {
       flag("warn", "Might have a facecam — check");
     }
     if (capCrop && clip.captions.frames < 3) flag("warn", "Caption crop unsure");
@@ -1363,6 +1443,7 @@ function buildManualPill(m, opts = {}) {
     paint();
     if (m.onNameChange) m.onNameChange();
   }
+  m.commitEdit = finishEdit; // saves a name that's still being typed (Make Pills clicked straight from the box)
   edit.addEventListener("blur", () => {
     if (editing && Date.now() - editStarted < 250) return;
     finishEdit();
@@ -1837,12 +1918,12 @@ function addSequenceCard() {
     c.chips.forEach((chip, j) => {
       const on = DIMENSIONS[j] === c.dim;
       chip.className = on ? "chip size on" : "chip size";
-      chip.iconEl.setAttribute("src", `icons/ar_${DIMENSIONS[j].icon}_${on ? "p" : "w"}.png`);
+      chip.iconEl.setAttribute("src", sizeIconSrc(DIMENSIONS[j].icon, on ? "p" : "w"));
     });
   };
   DIMENSIONS.forEach((dim) => {
     const chip = el("div", "chip size");
-    chip.iconEl = iconImg(`icons/ar_${dim.icon}_w.png`, "size-icon");
+    chip.iconEl = iconImg(sizeIconSrc(dim.icon, "w"), "size-icon");
     chip.iconEl.style.width = dim.iw + "px";
     chip.iconEl.style.height = dim.ih + "px";
     chip.labelEl = el("div", "size-label", dim.label);
@@ -2601,6 +2682,7 @@ const pillMakeBtn = document.getElementById("pillMakeBtn");
 onClick(pillMakeBtn, async () => {
   setEnabled(pillMakeBtn, false);
   try {
+    for (const r of pillRows) if (r.entry.commitEdit) r.entry.commitEdit();
     const wanted = pillRows
       .map((r) => r.entry)
       .filter((e) => e.streamerName)

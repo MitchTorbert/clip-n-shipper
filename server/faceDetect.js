@@ -39,6 +39,23 @@ const EDGE_DELTA = 28; // gray-level jump (0-255) that counts as an edge pixel
 const EDGE_MIN_SIDES = 0.7;
 const EDGE_MIN_TOP_BOTTOM = 0.65;
 
+// Full-screen camera: a big face (anywhere in the frame) in at least this many sampled frames.
+// Then the clip gets the blurred background, whatever else looks like a face (plushies, posters).
+// Webcam overlay faces are ~5-11% of the frame height.
+const FULLCAM_FACE_HEIGHT = 0.12;
+const FULLCAM_MIN_FRAMES = 2;
+
+// A side with no clear border can still take a weaker edge when it's a thin, sharp line (a webcam
+// overlay's border) rather than broad room texture. Used only for where the crop goes, never as
+// evidence that a webcam exists, so it can't turn IRL footage into a "facecam".
+// The faces in the chosen spot must look like one person: sizes within this ratio of each other,
+// and centers within this many face-widths. Otherwise different people walked through that spot.
+const SAME_FACE_MAX_SIZE_RATIO = 1.7;
+const SAME_FACE_MAX_DRIFT = 1.0;
+
+const WEAK_EDGE_MIN = 0.45;
+const WEAK_EDGE_ISOLATION = 0.5; // nearby columns/rows must average at most this share of the peak (a border can be a double line)
+
 // Person outline for keyed webcams.
 const PERSON_THRESHOLD = 0.85; // stricter than 0.5, which grabs dark background above hair
 const PERSON_MARGIN = 0.01; // breathing room around the outline, as a fraction of its size
@@ -74,6 +91,13 @@ function run(bin, args, signal) {
       reject(new Error((stderr && stderr.trim()) || err.message));
     });
   });
+}
+
+// Windows: the face models run in plain JavaScript and can keep the helper busy long enough
+// that the panel's "how's it going?" checks go unanswered. Pausing for a moment between
+// pieces of work lets those checks through. The Mac doesn't need it and skips it.
+function letOthersIn() {
+  return process.platform === "win32" ? new Promise((resolve) => setImmediate(resolve)) : Promise.resolve();
 }
 
 function throwIfStopped(signal) {
@@ -129,6 +153,7 @@ async function detectFaces(model, img, frac = 0.5, cols = 3, rows = 3, edgesOnly
         const src = ((ty + y) * img.w + tx) * 3;
         buf.set(img.rgb.subarray(src, src + tileW * 3), y * tileW * 3);
       }
+      await letOthersIn();
       const tensor = tf.tensor3d(buf, [tileH, tileW, 3]);
       let preds;
       try {
@@ -171,7 +196,33 @@ function clusterFace(perFrameFaces, W, H) {
   }
   if (!best || perFrameFaces.length === 0 || best.length / perFrameFaces.length < MIN_FRAME_FRACTION) return null;
   const avg = (k) => best.reduce((s, f) => s + f[k], 0) / best.length;
-  return { x: avg("x"), y: avg("y"), w: avg("w"), h: avg("h"), hits: best.length };
+  const heights = best.map((f) => f.h);
+  const cxs = best.map((f) => f.x + f.w / 2);
+  const cys = best.map((f) => f.y + f.h / 2);
+  return {
+    x: avg("x"),
+    y: avg("y"),
+    w: avg("w"),
+    h: avg("h"),
+    hits: best.length,
+    // how much the faces in this spot differ: one streamer on a webcam barely changes,
+    // different people walking through the same spot (IRL footage) do
+    sizeRatio: Math.max(...heights) / Math.max(1, Math.min(...heights)),
+    drift: Math.hypot(Math.max(...cxs) - Math.min(...cxs), Math.max(...cys) - Math.min(...cys)) / Math.max(1, avg("w")),
+  };
+}
+
+// True when a big face sits in the middle of the frame in enough sampled frames: the
+// footage is the camera itself (IRL / just chatting), not gameplay with a webcam overlay.
+function looksLikeFullCamera(perFrameFaces, W, H) {
+  let frames = 0;
+  for (const faces of perFrameFaces) {
+    // Big faces mean the footage is the camera itself, wherever they are: a handheld IRL camera
+    // catches faces near the edges too. Webcam overlay faces are ~5-11% of the frame height.
+    const big = faces.some((f) => f.h / H >= FULLCAM_FACE_HEIGHT);
+    if (big) frames++;
+  }
+  return frames >= FULLCAM_MIN_FRAMES;
 }
 
 function median(values) {
@@ -225,7 +276,36 @@ function findEdge(scoreAt, start, step, maxDist, limit, minScore) {
   if (best) return { pos: best.p, how: "edge" };
   const boundary = step > 0 ? limit : 0;
   if (Math.abs(boundary - start) <= maxDist) return { pos: boundary, how: "boundary" };
+  const weak = findSharpEdge(scoreAt, start, step, maxDist, limit);
+  if (weak) return weak;
   return null;
+}
+
+// The strongest thin, sharp line within reach scoring >= WEAK_EDGE_MIN, or null.
+function findSharpEdge(scoreAt, start, step, maxDist, limit) {
+  const near = Math.max(3, Math.round(limit * 0.0025)); // ~5 px on a 1080p frame
+  const far = Math.max(near + 4, Math.round(limit * 0.01)); // ~19 px
+  const cache = new Map();
+  const score = (p) => {
+    if (p < 0 || p > limit) return 0;
+    if (!cache.has(p)) cache.set(p, scoreAt(p));
+    return cache.get(p);
+  };
+  let best = null;
+  for (let d = 0; d <= maxDist; d++) {
+    const p = start + step * d;
+    if (p < 0 || p > limit) break;
+    const s = score(p);
+    if (s < WEAK_EDGE_MIN || (best && s <= best.s)) continue;
+    let sum = 0;
+    let n = 0;
+    for (let k = near; k <= far; k++) {
+      sum += score(p - k) + score(p + k);
+      n += 2;
+    }
+    if (sum / n <= s * WEAK_EDGE_ISOLATION) best = { p, s };
+  }
+  return best ? { pos: best.p, how: "weak" } : null;
 }
 
 function snapToWebcam(frames, face) {
@@ -353,6 +433,7 @@ async function personBounds(frames, face, onProgress, signal) {
     throwIfStopped(signal);
     onProgress && onProgress(`Outlining the streamer, frame ${i + 1}/${frames.length}…`);
     try {
+      await letOthersIn();
       const box = await personBox(segmenter, frames[i], face);
       if (box) boxes.push(box);
     } catch (e) {
@@ -455,6 +536,7 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
     for (let i = 0; i < framePaths.length; i++) {
       throwIfStopped(signal);
       onProgress && onProgress(`Scanning frame ${i + 1}/${framePaths.length} for a face…`);
+      await letOthersIn();
       const img = decodeFrame(framePaths[i]);
       frames.push(img);
       try {
@@ -464,6 +546,9 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
       }
     }
     if (!frames.length) return { found: false, reason: "no frames" };
+    if (looksLikeFullCamera(perFrameFaces, frames[0].w, frames[0].h)) {
+      return { found: false, reason: "a large face on screen — looks like a full-screen camera (IRL / just chatting)" };
+    }
     let face = clusterFace(perFrameFaces, frames[0].w, frames[0].h);
     if (!face) {
       // Nothing in the quick pass. Look again with smaller tiles, which can see a small webcam.
@@ -480,6 +565,9 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
       face = clusterFace(finer, frames[0].w, frames[0].h);
     }
     if (!face) return { found: false, reason: "no face seen consistently" };
+    if (face.sizeRatio > SAME_FACE_MAX_SIZE_RATIO || face.drift > SAME_FACE_MAX_DRIFT) {
+      return { found: false, reason: "different people passing through the same spot — looks like an IRL camera, not a webcam" };
+    }
     onProgress && onProgress("Finding the webcam edges…");
     return await buildResult(frames, face, onProgress, signal);
   } finally {

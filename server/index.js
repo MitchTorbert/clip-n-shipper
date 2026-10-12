@@ -111,13 +111,40 @@ function clearGeneratedFolders(projectDir, dirs, log) {
     return;
   }
   let removed = 0;
+  let locked = 0;
   for (const dir of [dirs.sourceFootage, dirs.pills]) {
     for (const name of fs.readdirSync(dir)) {
-      fs.rmSync(path.join(dir, name), { recursive: true, force: true });
-      removed++;
+      if (removeFile(path.join(dir, name))) removed++;
+      else locked++;
     }
   }
   log(`Cleared ${removed} file(s) from "${FOLDER_NAMES.sourceFootage}" and "${FOLDER_NAMES.pills}".`);
+  if (locked) {
+    log(`${locked} file(s) were left there because Premiere still has them open (Windows won't delete a file in use). New clips get new numbers, so nothing clashes; they'll clear next time.`);
+  }
+}
+
+// Deletes a file or folder. Windows refuses while another program (Premiere) has the file open,
+// so there it retries for a moment, then gives up on that one file instead of failing the run.
+// The Mac never hits this. Returns true when it's gone.
+function removeFile(target) {
+  const tries = process.platform === "win32" ? 6 : 1;
+  for (let i = 0; i < tries; i++) {
+    try {
+      fs.rmSync(target, { recursive: true, force: true, maxRetries: process.platform === "win32" ? 3 : 0, retryDelay: 100 });
+      return true;
+    } catch (e) {
+      if (!["EPERM", "EBUSY", "EACCES"].includes(e.code) || i === tries - 1) {
+        if (process.platform !== "win32") throw e;
+        return false;
+      }
+      const until = Date.now() + 250;
+      while (Date.now() < until) {
+        // brief wait before the next try
+      }
+    }
+  }
+  return false;
 }
 
 // Clips are named "<Streamer> 1", "<Streamer> 2"… in the order they were pasted.
@@ -207,7 +234,10 @@ async function runJob(job, clipSpecs, projectDir, signal, options) {
   if (!tools.ffprobe) missing.push("ffprobe");
   if (missing.length) {
     job.status = "error";
-    job.error = `Missing required tool(s): ${missing.join(", ")}. Install with Homebrew (brew install yt-dlp ffmpeg) and try again.`;
+    job.error =
+      process.platform === "win32"
+        ? `Missing required tool(s): ${missing.join(", ")}. Run the Clip-n-Shipper installer again, then restart Premiere.`
+        : `Missing required tool(s): ${missing.join(", ")}. Install with Homebrew (brew install yt-dlp ffmpeg) and try again.`;
     return;
   }
 

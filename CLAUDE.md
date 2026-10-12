@@ -3,7 +3,9 @@
 ## Who you're working with
 Mitch is a video editor at space150, not a programmer. Give click-by-click steps, one at a time. He gives
 feedback with screenshots. Keep a visible build stamp in the panel header ("build bNN") so he can confirm a
-reload. "Closest guess is fine, we fine-tune by hand." Don't publish, push releases, or install anything
+reload. "Closest guess is fine, we fine-tune by hand." After every change on the PC, end with the full
+PowerShell line to reinstall (he doesn't want to scroll back for it), and don't send him file downloads
+unless he asks: changes go straight into his project folder. Don't publish, push releases, or install anything
 persistent without asking first (the repo and releases are public: github.com/MitchTorbert/clip-n-shipper).
 
 ## What this is
@@ -20,7 +22,7 @@ background for clips with no facecam, pills on V3+). It can also queue sequences
 - `server/` helper. `platform.js` holds all Mac/Windows differences. `tools.js` finds yt-dlp/ffmpeg.
   `node installer/test-platform.js` runs the platform checks (works on any OS).
 - `assets/` sounds, caption style, layout templates, Ambassador list (auto-refreshed from Twitch).
-- `installer/` `install.sh` / `uninstall.sh` (Mac), `build-release.sh` (builds `dist/`).
+- `installer/` `install.sh` / `uninstall.sh` (Mac), `install.ps1` / `uninstall.ps1` (Windows), `build-release.sh` (builds `dist/`).
 - `WINDOWS_PORT.md` the Windows work: READ THIS FIRST if you're on a PC.
 
 ## Release process
