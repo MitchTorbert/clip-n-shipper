@@ -225,6 +225,17 @@ function looksLikeFullCamera(perFrameFaces, W, H) {
   return frames >= FULLCAM_MIN_FRAMES;
 }
 
+// A real webcam overlay shows it in its edges: at least two sides with a clear border line, or
+// a corner position (two sides on the frame's edge) plus at least one more real side. A face
+// from an IRL scene, a plushie or a poster doesn't have that.
+function isStrongWebcam(result) {
+  const sides = Object.values(result.edges || {});
+  const edge = sides.filter((h) => h === "edge").length;
+  const person = sides.filter((h) => h === "person").length;
+  const boundary = sides.filter((h) => h === "boundary").length;
+  return edge >= 2 || (boundary >= 2 && edge + person >= 1);
+}
+
 function median(values) {
   const s = [...values].sort((a, b) => a - b);
   return s[Math.floor(s.length / 2)];
@@ -546,9 +557,10 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
       }
     }
     if (!frames.length) return { found: false, reason: "no frames" };
-    if (looksLikeFullCamera(perFrameFaces, frames[0].w, frames[0].h)) {
-      return { found: false, reason: "a large face on screen — looks like a full-screen camera (IRL / just chatting)" };
-    }
+    // Big faces on screen hint at a full-screen camera (IRL / just chatting), but games and
+    // streams also produce false "faces" that big. So this only counts against a webcam
+    // that has no clear overlay border or corner position (see isStrongWebcam below).
+    const bigFaces = looksLikeFullCamera(perFrameFaces, frames[0].w, frames[0].h);
     let face = clusterFace(perFrameFaces, frames[0].w, frames[0].h);
     if (!face) {
       // Nothing in the quick pass. Look again with smaller tiles, which can see a small webcam.
@@ -569,7 +581,11 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
       return { found: false, reason: "different people passing through the same spot — looks like an IRL camera, not a webcam" };
     }
     onProgress && onProgress("Finding the webcam edges…");
-    return await buildResult(frames, face, onProgress, signal);
+    const result = await buildResult(frames, face, onProgress, signal);
+    if (result.found && bigFaces && !isStrongWebcam(result)) {
+      return { found: false, reason: "a large face on screen — looks like a full-screen camera (IRL / just chatting)" };
+    }
+    return result;
   } finally {
     for (const f of framePaths) {
       try {
