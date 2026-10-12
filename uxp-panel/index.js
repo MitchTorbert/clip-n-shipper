@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b36";
+const BUILD = "b37";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -51,7 +51,14 @@ try {
   isWindows = /^win/i.test((typeof navigator !== "undefined" && navigator.platform) || "");
 }
 if (isWindows) document.body.className = (document.body.className + " win").trim();
-document.getElementById("build").textContent = "build " + BUILD + (premiereVersion ? " · Premiere " + premiereVersion : "");
+// The release number comes from the panel's own manifest, which the release build stamps from VERSION.
+let PANEL_VERSION = "";
+try {
+  PANEL_VERSION = require("uxp").versions.plugin || "";
+} catch (e) {
+  // older builds don't offer it; the build number below stands in
+}
+document.getElementById("build").textContent = (PANEL_VERSION ? "v" + PANEL_VERSION : "build " + BUILD) + (premiereVersion ? " · Premiere " + premiereVersion : "");
 
 // Progress chatter goes to the developer console only. Anything the user needs to know
 // (errors, and messages marked `notice`) is kept in `notices` and shown in the report.
@@ -262,11 +269,13 @@ async function refreshStatus() {
   const helperStale = !!(ping && ping.stale);
   const project = await ppro.Project.getActiveProject();
   if (!helperUp && !project) {
-    setStatus('The helper is not running and no project is open. Double-click "Start Clip-n-Ship Helper.command", then open a project in Premiere.', "err");
+    setStatus("The helper is not running and no project is open. Restart your computer or run the Clip-n-Shipper installer again, then open a project in Premiere.", "err");
   } else if (!helperUp) {
-    setStatus('The helper is not running. Double-click "Start Clip-n-Ship Helper.command" in the Clip-n-Ship Setup folder.', "err");
+    setStatus("The helper is not running. Restart your computer, or run the Clip-n-Shipper installer again. It starts the helper for you.", "err");
   } else if (helperStale) {
-    setStatus('The helper is out of date. Close its Terminal window, then double-click "Start Clip-n-Ship Helper.command" again.', "err");
+    setStatus("The helper was changed while it was running. Restart your computer, or run the Clip-n-Shipper installer again.", "err");
+  } else if (ping.version && PANEL_VERSION && ping.version !== PANEL_VERSION) {
+    setStatus(`The panel is v${PANEL_VERSION} but the helper is v${ping.version}. Run the Clip-n-Shipper installer again to update both, then restart Premiere.`, "err");
   } else if (!project) {
     setStatus("No project is open. Open or create one in Premiere.", "err");
   } else {
@@ -2065,11 +2074,11 @@ async function onSetupClick() {
   try {
     const { helperUp, helperStale, project } = await refreshStatus();
     if (!helperUp) {
-      log('Helper is not running. Double-click "Start Clip-n-Ship Helper.command" and try again.', "err");
+      log("The helper is not running. Restart your computer, or run the Clip-n-Shipper installer again. It starts the helper for you.", "err");
       return;
     }
     if (helperStale) {
-      log('The helper is running old code. Close its Terminal window, double-click "Start Clip-n-Ship Helper.command" again, then retry.', "err");
+      log("The helper was changed while it was running. Restart your computer, or run the Clip-n-Shipper installer again, then retry.", "err");
       return;
     }
     if (!project) {
@@ -2222,6 +2231,7 @@ async function runHealthCheck() {
   const add = (level, label, detail) => rows.push({ level, label, detail });
 
   add("ok", "Premiere", premiereVersion ? `version ${premiereVersion}` : "version not reported");
+  add("ok", "Panel", PANEL_VERSION ? `v${PANEL_VERSION} (build ${BUILD})` : `build ${BUILD}`);
   let project = null;
   try {
     project = await ppro.Project.getActiveProject();
@@ -2284,7 +2294,7 @@ async function runHealthCheck() {
     const data = await res.json();
     for (const r of data.rows) add(r.level, r.label, r.detail);
   } catch (e) {
-    add("err", "Helper", 'not reachable — double-click "Start Clip-n-Ship Helper.command"');
+    add("err", "Helper", "not reachable. Restart your computer or run the Clip-n-Shipper installer again");
   }
 
   lastHealth = rows;
@@ -2347,7 +2357,7 @@ onClick(document.getElementById("reportSend"), async () => {
         title,
         description,
         name: reportNameInput.value.trim(),
-        diagnostics: { app: "Clip-n-Shipper " + BUILD, premiere: premiereVersion || "unknown", panelWidth: String((document.body && document.body.clientWidth) || "") },
+        diagnostics: { app: "Clip-n-Shipper " + (PANEL_VERSION ? "v" + PANEL_VERSION + " " : "") + BUILD, premiere: premiereVersion || "unknown", panelWidth: String((document.body && document.body.clientWidth) || "") },
       }),
     });
     const data = await res.json();
@@ -2476,7 +2486,7 @@ onClick(queueBtn, async () => {
   try {
     const ping = await pingHelper();
     if (!ping) {
-      say('Helper is not running — double-click "Start Clip-n-Ship Helper.command" first.', "err");
+      say("The helper is not running. Restart your computer, or run the Clip-n-Shipper installer again. It starts the helper for you.", "err");
       return;
     }
     const info = await currentSequenceNames();
@@ -2689,7 +2699,7 @@ onClick(pillMakeBtn, async () => {
       .map((e) => ({ name: e.streamerName, colorHex: e.pill.color.hex, colorName: e.pill.color.name, ambassador: e.pill.ambassador }));
     if (!wanted.length) return pillStatus([["Type at least one streamer name first.", "warn"]]);
     const ping = await pingHelper();
-    if (!ping) return pillStatus([['The helper is not running. Double-click "Start Clip-n-Ship Helper.command" first.', "err"]]);
+    if (!ping) return pillStatus([["The helper is not running. Restart your computer, or run the Clip-n-Shipper installer again. It starts the helper for you.", "err"]]);
     const project = await ppro.Project.getActiveProject();
     if (!project) return pillStatus([["Open a Premiere project first.", "err"]]);
 

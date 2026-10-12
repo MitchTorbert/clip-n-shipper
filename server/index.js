@@ -21,6 +21,14 @@ const { runHealth } = require("./health");
 const platform = require("./platform");
 
 const PORT = Number(process.env.CNS_PORT) || 8934;
+// The release number (the VERSION file ships next to server/ and assets/).
+const HELPER_VERSION = (() => {
+  try {
+    return fs.readFileSync(path.join(__dirname, "..", "VERSION"), "utf8").trim();
+  } catch (e) {
+    return "unknown";
+  }
+})();
 const PILL_SERVICE_URL = "https://pill-generator-262830497959.us-central1.run.app";
 // Fixed addresses the panel's footer links can open (it never opens anything it supplies itself).
 const OPEN_TARGETS = { space150: "https://www.space150.com/", pillgen: PILL_SERVICE_URL + "/" };
@@ -477,7 +485,7 @@ const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
 
   if (req.method === "GET" && url.pathname === "/ping") {
-    sendJson(res, 200, { ok: true, stale: codeIsStale() });
+    sendJson(res, 200, { ok: true, stale: codeIsStale(), version: HELPER_VERSION });
     return;
   }
 
@@ -495,6 +503,7 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && url.pathname === "/health") {
     const assetsDir = path.join(__dirname, "..", "assets");
     const rows = await runHealth(checkAllTools(), {
+      version: HELPER_VERSION,
       pillService: PILL_SERVICE_URL,
       ambassadorCount: () => readAmbassadors().length,
       h264Preset: findH264Preset,

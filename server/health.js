@@ -26,7 +26,7 @@ async function runHealth(tools, ctx) {
   const rows = [];
   const add = (level, label, detail) => rows.push({ level, label, detail });
 
-  add("ok", "Helper", `running (Node ${process.version})`);
+  add("ok", "Helper", `v${ctx.version || "?"}, running (Node ${process.version})`);
 
   if (!tools.ytDlp) add("err", "yt-dlp (downloader)", "not found — install with: brew install yt-dlp");
   else {
