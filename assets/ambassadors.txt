@@ -1,7 +1,7 @@
 # Twitch Ambassador channels, one login (lowercase) per line.
 # The panel ticks the Ambassador box automatically for any streamer listed here.
 # Source: twitch.tv/team/ambassadors (refreshed automatically by the helper). Lines starting with # are ignored.
-# Updated 2026-10-09 - 245 channels
+# Updated 2026-10-14 - 245 channels
 abulic
 akari
 alphaduplo

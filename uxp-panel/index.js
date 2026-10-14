@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b37";
+const BUILD = "b38";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -34,6 +34,7 @@ const DIMENSIONS = [
 const logEl = document.getElementById("log");
 const statusEl = document.getElementById("statusLine");
 const setupBtn = document.getElementById("setupBtn");
+const setupLabel = document.getElementById("setupLabel");
 const stopBtn = document.getElementById("stopBtn");
 const sequencesEl = document.getElementById("sequences");
 const addSeqBtn = document.getElementById("addSeqBtn");
@@ -263,11 +264,82 @@ async function countExistingClips(project) {
   return counts;
 }
 
+// ---- which project to build into ----
+// Premiere only calls one project "active", and with several open that isn't always the one
+// you're looking at. So the panel lists every open project, shows which one it will use, and
+// lets you pick. Everything (folders, clips, sequences, queueing) goes to that project.
+let chosenProjectKey = null; // the path of the project the user picked
+const projectKey = (p) => String((p && (p.path || p.name)) || "");
+
+async function resolveProject() {
+  const list = [];
+  const add = (p) => {
+    if (p && !list.some((q) => projectKey(q) === projectKey(p))) list.push(p);
+  };
+  let active = null;
+  try {
+    active = await ppro.Project.getActiveProject();
+  } catch (e) {
+    // no project is active
+  }
+  add(active);
+  try {
+    for (const id of await ppro.ProjectUtils.getProjectViewIds()) {
+      try {
+        add(await ppro.ProjectUtils.getProjectFromViewId(id));
+      } catch (e) {
+        // a panel that can't be read is skipped
+      }
+    }
+  } catch (e) {
+    // only the active project is known
+  }
+  let project = active || list[0] || null;
+  if (chosenProjectKey) {
+    const picked = list.find((p) => projectKey(p) === chosenProjectKey);
+    if (picked) project = picked;
+    else chosenProjectKey = null; // that project was closed
+  }
+  return { project, list };
+}
+async function getTargetProject() {
+  return (await resolveProject()).project;
+}
+
+const projectPickEl = document.getElementById("projectPick");
+let projectPickSignature = "";
+function showProjectPicker(list, target) {
+  const signature = list.map(projectKey).join("|") + "=>" + projectKey(target);
+  if (signature === projectPickSignature) return;
+  projectPickSignature = signature;
+  projectPickEl.textContent = "";
+  if (list.length < 2) {
+    projectPickEl.style.display = "none";
+    return;
+  }
+  projectPickEl.style.display = "block";
+  projectPickEl.appendChild(el("div", "pill-note", "Several projects are open. Build into:"));
+  const row = el("div", "chips");
+  for (const p of list) {
+    const chip = el("div", projectKey(p) === projectKey(target) ? "chip on" : "chip", p.name);
+    onClick(chip, () => {
+      chosenProjectKey = projectKey(p);
+      refreshStatus().catch(() => {});
+    });
+    row.appendChild(chip);
+  }
+  projectPickEl.appendChild(row);
+}
+
 async function refreshStatus() {
   const ping = await pingHelper();
   const helperUp = !!ping;
   const helperStale = !!(ping && ping.stale);
-  const project = await ppro.Project.getActiveProject();
+  const { project, list } = await resolveProject();
+  showProjectPicker(list, project);
+  // The project the run will use, in small text on the button.
+  const sub = document.getElementById("setupSub");
+  if (sub) sub.textContent = project ? "Project: " + (project.name.length > 26 ? project.name.slice(0, 25) + "…" : project.name) : "No project open";
   if (!helperUp && !project) {
     setStatus("The helper is not running and no project is open. Restart your computer or run the Clip-n-Shipper installer again, then open a project in Premiere.", "err");
   } else if (!helperUp) {
@@ -837,6 +909,45 @@ function shortLink(url) {
   return m ? m[1] : String(url).slice(0, 40);
 }
 
+// The shared sounds go into "03 SFX" and the caption style and layout templates into "04 GFX",
+// once each (anything already in the bin is skipped).
+async function importSharedFiles(project, bins, manifest) {
+  const into = async (binName, files, what) => {
+    const bin = bins[binName];
+    if (!bin || !files || !files.length) return;
+    try {
+      const have = (await bin.getItems()).map((i) => i.name);
+      const missing = files.filter((f) => !have.some((n) => n === basename(f) || n === basename(f).replace(/\.[^.]+$/, "")));
+      if (missing.length) await project.importFiles(missing, true, bin, false);
+    } catch (e) {
+      log(`Couldn't import the ${what}: ${e && e.message ? e.message : e}`, "warn", true);
+    }
+  };
+  await into(manifest.folders.sfx, manifest.sfxFiles, "sound effects");
+  await into(manifest.folders.gfx, manifest.styleFiles, "caption style and layout templates");
+}
+
+// Right at the start: every folder (on disk and in the project) plus the shared sounds and
+// templates, so other media can be dropped in by hand while the clips are still working.
+async function prepareProjectFolders(project, projectDir, clearFolders) {
+  try {
+    const res = await fetch(HELPER_BASE + "/prepare", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ projectDir, clearFolders: !!clearFolders }),
+    });
+    const prep = await res.json();
+    if (!res.ok) throw new Error(prep.error || "the helper couldn't prepare the folders");
+    const bins = await ensureFolders(project, Object.values(prep.folders));
+    await importSharedFiles(project, bins, prep);
+    log("Folders are ready in the project and on disk.");
+    return true;
+  } catch (e) {
+    log(`Couldn't set the folders up first (${e && e.message ? e.message : e}); they'll be made as the clips arrive.`, "warn", true);
+    return false;
+  }
+}
+
 async function buildProject(project, manifest, seq, clearFirst) {
   const entries = new Map();
   for (const c of manifest.clips) {
@@ -901,33 +1012,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
     }
   }
 
-  // Bring the shared sound effects (the bleep) into "03 SFX", once.
-  const sfxBin = bins[manifest.folders.sfx];
-  if (sfxBin && manifest.sfxFiles && manifest.sfxFiles.length) {
-    try {
-      const have = (await sfxBin.getItems()).map((i) => i.name);
-      const missing = manifest.sfxFiles.filter((f) => !have.some((n) => n === basename(f) || n === basename(f).replace(/\.[^.]+$/, "")));
-      if (missing.length) await project.importFiles(missing, true, sfxBin, false);
-    } catch (e) {
-      log(`Couldn't import the sound effects: ${e && e.message ? e.message : e}`, "warn", true);
-    }
-  }
-
-  // The caption look: bring "Twitch Subtitles" into the GFX bin, once.
-  const gfxBin = bins[manifest.folders.gfx];
-  if (gfxBin && manifest.styleFiles && manifest.styleFiles.length) {
-    try {
-      const have = (await gfxBin.getItems()).map((i) => i.name);
-      const missing = manifest.styleFiles.filter((f) => !have.some((n) => n === basename(f) || n === basename(f).replace(/\.[^.]+$/, "")));
-      if (missing.length) {
-        await project.importFiles(missing, true, gfxBin, false);
-        const after = (await gfxBin.getItems()).map((i) => i.name);
-        log("GFX files imported (caption style, layout templates). GFX bin now holds: " + (after.join(", ") || "nothing") + ".");
-      }
-    } catch (e) {
-      log(`Couldn't import the caption style and templates: ${e && e.message ? e.message : e}`, "warn", true);
-    }
-  }
+  await importSharedFiles(project, bins, manifest);
 
   log(`Creating sequence "${seq.name}" at ${seq.width}x${seq.height}…`);
   const sequence = await buildSequence(project, seq, sequenceFpsFor(okClips));
@@ -2050,17 +2135,17 @@ function startSpinner() {
   let i = 0;
   setupBtn._enabled = false;
   setupBtn.className = "btn primary busy";
-  setupBtn.textContent = `${SPIN_FRAMES[0]}  Setting up…${spinnerNote}`;
+  setupLabel.textContent = `${SPIN_FRAMES[0]}  Setting up…${spinnerNote}`;
   clearInterval(spinnerTimer);
   spinnerTimer = setInterval(() => {
     i = (i + 1) % SPIN_FRAMES.length;
-    setupBtn.textContent = `${SPIN_FRAMES[i]}  Setting up…${spinnerNote}`;
+    setupLabel.textContent = `${SPIN_FRAMES[i]}  Setting up…${spinnerNote}`;
   }, 90);
 }
 function stopSpinner() {
   clearInterval(spinnerTimer);
   setupBtn.className = "btn primary";
-  setupBtn.textContent = "Set Up Project";
+  setupLabel.textContent = "Set Up Project";
   setEnabled(setupBtn, true);
 }
 
@@ -2153,6 +2238,9 @@ async function onSetupClick() {
       log("Clearing the project…");
       await clearProject(project);
     }
+    // Folders first (project bins and disk folders, plus the shared sounds and templates), so other
+    // media can be added by hand while the clips download.
+    if (await prepareProjectFolders(project, projectDir, clearFoldersPending)) clearFoldersPending = false;
     for (let i = 0; i < plan.length; i++) {
       const seq = plan[i];
       if (plan.length > 1) log(`— Sequence ${i + 1} of ${plan.length}: "${seq.name}" (${seq.width}×${seq.height}) —`);
@@ -2234,7 +2322,7 @@ async function runHealthCheck() {
   add("ok", "Panel", PANEL_VERSION ? `v${PANEL_VERSION} (build ${BUILD})` : `build ${BUILD}`);
   let project = null;
   try {
-    project = await ppro.Project.getActiveProject();
+    project = await getTargetProject();
   } catch (e) {
     // handled below
   }
@@ -2414,7 +2502,7 @@ function fileSafe(name) {
 }
 
 async function currentSequenceNames() {
-  const project = await ppro.Project.getActiveProject();
+  const project = await getTargetProject();
   if (!project) return null;
   const sequences = await project.getSequences();
   let active = null;
@@ -2564,7 +2652,7 @@ const tabPills = document.getElementById("tabPills");
 // frame or seconds per frame, so all three are understood).
 async function currentSequenceFps() {
   try {
-    const project = await ppro.Project.getActiveProject();
+    const project = await getTargetProject();
     if (!project) return null;
     const sequence = await project.getActiveSequence();
     if (!sequence) return null;
@@ -2700,7 +2788,7 @@ onClick(pillMakeBtn, async () => {
     if (!wanted.length) return pillStatus([["Type at least one streamer name first.", "warn"]]);
     const ping = await pingHelper();
     if (!ping) return pillStatus([["The helper is not running. Restart your computer, or run the Clip-n-Shipper installer again. It starts the helper for you.", "err"]]);
-    const project = await ppro.Project.getActiveProject();
+    const project = await getTargetProject();
     if (!project) return pillStatus([["Open a Premiere project first.", "err"]]);
 
     pillStatus([[`Making ${wanted.length} pill${wanted.length === 1 ? "" : "s"}… (about 20 seconds each)`, "info"]]);
@@ -2750,6 +2838,15 @@ onClick(resetBtn, () => {
   notices.length = 0;
   reportEl.style.display = "none";
   reportEl.textContent = "";
+  // The Media Encoder queue area goes back to how it started too.
+  queueLines.length = 0;
+  queueStatusEl.textContent = "";
+  queueStatusEl.style.display = "none";
+  queueSelected = new Set();
+  queueTouched = false;
+  queueListOpen = false;
+  queueList.style.display = "none";
+  queueArrow.textContent = "▾";
   addSequenceCard();
   refreshStatus().catch(() => {});
 });

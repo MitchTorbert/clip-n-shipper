@@ -155,6 +155,28 @@ function removeFile(target) {
   return false;
 }
 
+// Makes every project folder on disk and copies the shared sounds, templates and caption style
+// into 03 SFX / 04 GFX. Safe to run again. The panel calls this first (via /prepare) so the
+// folders exist before any clip is touched, and the job calls it too in case it wasn't.
+function prepareFolders(projectDir, clearFolders, log) {
+  const dirs = ensureProjectFolders(projectDir);
+  if (clearFolders) clearGeneratedFolders(projectDir, dirs, log);
+  const copyAll = (sources, destDir, label) => {
+    const copied = [];
+    for (const src of sources) {
+      try {
+        const dest = path.join(destDir, path.basename(src));
+        if (!fs.existsSync(dest)) fs.copyFileSync(src, dest);
+        copied.push(dest);
+      } catch (e) {
+        log("Couldn't copy " + path.basename(src) + " into the " + label + " folder: " + e.message);
+      }
+    }
+    return copied;
+  };
+  return { dirs, sfxFiles: copyAll(SHARED_SFX, dirs.sfx, "SFX"), styleFiles: copyAll(SHARED_STYLES, dirs.gfx, "GFX") };
+}
+
 // Clips are named "<Streamer> 1", "<Streamer> 2"… in the order they were pasted.
 // Numbering carries on from the highest number already used for that streamer,
 // whether it's in the folder on disk or (passed in by the panel) in the project.
@@ -250,28 +272,7 @@ async function runJob(job, clipSpecs, projectDir, signal, options) {
   }
 
   job.log.push("Creating folders…");
-  const dirs = ensureProjectFolders(projectDir);
-  if (clearFolders) clearGeneratedFolders(projectDir, dirs, (m) => job.log.push(m));
-  const styleFiles = [];
-  for (const src of SHARED_STYLES) {
-    try {
-      const dest = path.join(dirs.gfx, path.basename(src));
-      if (!fs.existsSync(dest)) fs.copyFileSync(src, dest);
-      styleFiles.push(dest);
-    } catch (e) {
-      job.log.push("Couldn't copy " + path.basename(src) + " into the GFX folder: " + e.message);
-    }
-  }
-  const sfxFiles = [];
-  for (const src of SHARED_SFX) {
-    try {
-      const dest = path.join(dirs.sfx, path.basename(src));
-      if (!fs.existsSync(dest)) fs.copyFileSync(src, dest);
-      sfxFiles.push(dest);
-    } catch (e) {
-      job.log.push("Couldn't copy " + path.basename(src) + " into the SFX folder: " + e.message);
-    }
-  }
+  const { dirs, sfxFiles, styleFiles } = prepareFolders(projectDir, clearFolders, (m) => job.log.push(m));
 
   // Highest clip number used so far per streamer (lowercase name).
   const counts = existingClipNumbers(dirs.sourceFootage);
@@ -486,6 +487,22 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && url.pathname === "/ping") {
     sendJson(res, 200, { ok: true, stale: codeIsStale(), version: HELPER_VERSION });
+    return;
+  }
+
+  if (req.method === "POST" && url.pathname === "/prepare") {
+    try {
+      const body = await readJsonBody(req);
+      if (!body.projectDir || typeof body.projectDir !== "string") {
+        sendJson(res, 400, { error: "No projectDir provided." });
+        return;
+      }
+      const lines = [];
+      const { sfxFiles, styleFiles } = prepareFolders(body.projectDir, body.clearFolders === true, (m) => lines.push(m));
+      sendJson(res, 200, { folders: FOLDER_NAMES, sfxFiles, styleFiles, notes: lines });
+    } catch (e) {
+      sendJson(res, 500, { error: e.message });
+    }
     return;
   }
 

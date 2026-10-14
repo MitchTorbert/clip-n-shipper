@@ -32,7 +32,9 @@
     .tabbar { display: flex; flex-direction: row; border-bottom: 1px solid #5b2a80; margin: -4px 0 10px; }
     .tab { padding: 3px 10px; margin-right: 2px; border-radius: 4px 4px 0 0; background: transparent; color: #a98cc2; font-size: 10px; cursor: pointer; }
     .tab.on { background: #561b7e; color: #ffffff; font-weight: 600; }
-    #setupBtn { min-width: 150px; }
+    #setupBtn { min-width: 150px; text-align: center; }
+    .btn-sub { font-size: 9px; font-weight: 400; margin-top: 2px; color: #e8d7f4; white-space: nowrap; }
+    .project-pick { margin: 0 0 10px; }
     .title-hit { position: absolute; left: 0; top: 0; }
     .note-row { display: flex; flex-direction: row; align-items: center; }
     .note-text { color: #e8d7f4; font-size: 11px; }
@@ -306,10 +308,12 @@
   <div id="modeRow" class="mode-row"></div>
 
   <div class="actions">
-    <div id="setupBtn" class="btn primary" role="button">Set Up Project</div>
+    <div id="setupBtn" class="btn primary" role="button"><div id="setupLabel" class="btn-main">Set Up Project</div><div id="setupSub" class="btn-sub"></div></div>
     <div id="stopBtn" class="btn disabled" role="button">Stop</div>
     <div id="resetBtn" class="btn" role="button">Reset</div>
   </div>
+
+  <div id="projectPick" class="project-pick" style="display: none"></div>
 
   <div id="report" class="report" style="display: none"></div>
 
