@@ -314,7 +314,7 @@ async function runJob(job, clipSpecs, projectDir, signal, options) {
       let pillPromise = null;
       clip.pill = null;
       if (spec.pill && spec.pill.enabled) {
-        const pillName = clip.channelName || spec.pill.name; // X / YouTube: the name typed in by hand
+        const pillName = spec.pill.name || clip.channelName; // a name typed by hand (X / YouTube, or edited on a Twitch row) wins
         if (!pillName) {
           job.log.push(prefix + "No pill — this clip has no streamer name and none was typed in.");
         } else if (pilled.has(pillName.toLowerCase()) && !spec.pill.duplicate) {

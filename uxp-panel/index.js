@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b38";
+const BUILD = "b39";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -1447,7 +1447,7 @@ function pillImage(side, hex) {
 //   opts.optional: starts as a dotted "+ Add pill" button, and × returns to it
 //   opts.onRemove: × calls this instead (Pill Generator rows)
 function buildManualPill(m, opts = {}) {
-  m.pill = { on: !opts.optional, color: m.initialColor || lastPillColor, ambassador: false };
+  m.pill = { on: opts.startOn !== undefined ? opts.startOn : !opts.optional, color: m.initialColor || lastPillColor, ambassador: false };
   m.streamerName = m.streamerName || "";
   const wrap = el("div", "pill-row");
   const addBtn = el("div", "pill-add");
@@ -1495,6 +1495,7 @@ function buildManualPill(m, opts = {}) {
     const hex = m.pill.color.hex;
     addBtn.style.display = on ? "none" : "block";
     for (const node of [removeBtn, chip, circle, ambassadorBox]) node.style.display = on ? (node === removeBtn ? "block" : "flex") : "none";
+    if (on && editing) chip.style.display = "none"; // the name is being typed: keep the text box showing
     if (!on) palette.style.display = "none";
     chip.textContent = "";
     chip.appendChild(pillImage("l", hex));
@@ -1530,7 +1531,9 @@ function buildManualPill(m, opts = {}) {
   function finishEdit() {
     if (!editing) return;
     editing = false;
-    m.streamerName = edit.value.trim().replace(/^\/+/, "");
+    const typed = edit.value.trim().replace(/^\/+/, "");
+    if (typed !== m.streamerName) m.nameEdited = true; // a name typed by hand wins over the one read from the link
+    m.streamerName = typed;
     edit.style.display = "none";
     chip.style.display = "flex";
     autoAmbassador(m, m.streamerName);
@@ -1552,12 +1555,15 @@ function buildManualPill(m, opts = {}) {
   onClick(addBtn, () => {
     m.pill.on = true;
     paint();
-    startEdit();
+    if (!m.streamerName) startEdit(); // a Twitch row already has its name; only a blank one asks for it
+    refreshPillRows();
   });
   onClick(removeBtn, () => {
     if (opts.onRemove) return opts.onRemove();
     m.pill.on = false;
+    m.duplicate = false; // a repeat streamer goes back to the "already has a pill" note
     paint();
+    refreshPillRows();
   });
   checkbox.addEventListener("change", () => {
     m.pill.ambassador = checkbox.checked;
@@ -1579,154 +1585,6 @@ function buildManualPill(m, opts = {}) {
   m.palette = palette;
   paint();
   return wrap;
-}
-
-function buildPillControls(entry) {
-  entry.pill = { on: true, color: entry.initialColor || lastPillColor, ambassador: false };
-  entry.streamerName = entry.streamerName || null;
-  const wrap = el("div", "pill-row");
-  entry.pillControls = wrap;
-
-  // Off state
-  const addBtn = el("div", "pill-add");
-  addBtn.appendChild(iconImg("icons/pills/add_dashed.png", "pill-add-bg"));
-  addBtn.appendChild(el("div", "pill-add-label", "+ Add pill"));
-
-  // On state
-  const chip = el("div", "pill-chip");
-  const body = el("div", "pill-body");
-  let leftCap = null;
-  let rightCap = null;
-  const ambassadorBox = el("div", "amb");
-  const checkbox = el("input");
-  checkbox.setAttribute("type", "checkbox");
-  const ambassadorIcon = iconImg("icons/ambassador.png", "amb-icon");
-  ambassadorBox.appendChild(checkbox);
-  ambassadorBox.appendChild(ambassadorIcon);
-  const removeBtn = el("div", "pill-x", "×");
-
-  const palette = el("div", "palette");
-  palette.style.display = "none";
-  const swatchEls = [];
-  for (let shade = 0; shade < 4; shade++) {
-    const paletteRow = el("div", "palette-row");
-    PILL_COLOR_FAMILIES.forEach((family) => {
-      const color = family[shade];
-      const swatchEl = el("div", "palette-swatch");
-      swatchEl.style.background = color.hex;
-      swatchEl.style.color = isLightColor(color.hex) ? "#18181b" : "#ffffff";
-      onClick(swatchEl, () => {
-        entry.pill.color = color;
-        lastPillColor = color;
-        palette.style.display = "none";
-        paint();
-      });
-      swatchEls.push([swatchEl, color]);
-      paletteRow.appendChild(swatchEl);
-    });
-    palette.appendChild(paletteRow);
-  }
-
-  function paintChip() {
-    const hex = entry.pill.color.hex;
-    const next = [pillImage("l", hex), pillImage("r", hex)];
-    chip.textContent = "";
-    chip.appendChild(next[0]);
-    chip.appendChild(body);
-    chip.appendChild(next[1]);
-    leftCap = next[0];
-    rightCap = next[1];
-    body.style.background = hex;
-    body.style.color = isLightColor(hex) ? "#18181b" : "#ffffff";
-    body.textContent = "/" + (entry.streamerName || "streamer");
-  }
-
-  function paint() {
-    const on = entry.pill.on;
-    addBtn.style.display = on ? "none" : "block";
-    chip.style.display = on ? "flex" : "none";
-    ambassadorBox.style.display = on ? "flex" : "none";
-    removeBtn.style.display = on ? "block" : "none";
-    if (!on) palette.style.display = "none";
-    paintChip();
-    checkbox.checked = entry.pill.ambassador;
-    swatchEls.forEach(([swatchEl, color]) => {
-      swatchEl.textContent = color.hex === entry.pill.color.hex ? "✓" : "";
-    });
-  }
-  entry.repaintPill = paint;
-
-  onClick(addBtn, () => {
-    entry.pill.on = true;
-    paint();
-    refreshPillRows();
-  });
-  onClick(removeBtn, () => {
-    if (entry.onRemove) return entry.onRemove(); // extra pills just disappear
-    entry.pill.on = false;
-    entry.duplicate = false; // back to the "already has a pill" note for a repeat streamer
-    paint();
-    refreshPillRows();
-  });
-  onClick(chip, () => {
-    palette.style.display = palette.style.display === "none" ? "block" : "none";
-  });
-  checkbox.addEventListener("change", () => {
-    entry.pill.ambassador = checkbox.checked;
-    entry.ambassadorTouched = true; // the user's choice wins over the automatic one
-  });
-  onClick(ambassadorIcon, () => {
-    checkbox.checked = !checkbox.checked;
-    entry.pill.ambassador = checkbox.checked;
-    entry.ambassadorTouched = true;
-  });
-
-  wrap.appendChild(addBtn);
-  wrap.appendChild(removeBtn);
-  wrap.appendChild(chip);
-  wrap.appendChild(ambassadorBox);
-  entry.palette = palette;
-  paint();
-  return wrap;
-}
-
-// Right after a link is pasted: is it a real clip / a post with a video?
-// The shape of the link is checked instantly; the helper then confirms with
-// Twitch (fast) or, for Twitter posts, with a short background check that
-// never blocks the panel. If the helper can't tell, the link is left alone.
-const INVALID_LINK = "⚠️ Not a valid video link";
-const urlChecks = new Map(); // link -> result from the helper
-function showUrlNote(entry, text, level) {
-  entry.urlNote.textContent = text;
-  entry.urlNote.className = "url-note " + (level || "");
-  entry.urlNote.style.display = text ? "block" : "none";
-}
-
-async function validateRow(entry) {
-  const stamp = (entry.checkStamp = (entry.checkStamp || 0) + 1);
-  const raw = entry.input.value.trim();
-  if (!raw) return showUrlNote(entry, "");
-  const links = splitLinks(entry.input.value);
-  if (!links.length || links.some((l) => !isClipUrl(l))) {
-    return showUrlNote(entry, INVALID_LINK, "err");
-  }
-  for (const link of links.slice(0, 3)) {
-    let result = urlChecks.get(link);
-    if (!result) {
-      if (linkKind(link).type === "x") showUrlNote(entry, "Checking the post for video…", "info");
-      if (linkKind(link).type === "youtube") showUrlNote(entry, "Checking the video…", "info");
-      try {
-        const res = await fetch(HELPER_BASE + "/check-url?url=" + encodeURIComponent(link));
-        result = res.ok ? await res.json() : { ok: true, unchecked: true };
-      } catch (e) {
-        result = { ok: true, unchecked: true }; // helper not reachable: the shape check passed, so leave it
-      }
-      if (!result.unchecked) urlChecks.set(link, result);
-      if (stamp !== entry.checkStamp) return; // the box changed while we were checking
-    }
-    if (!result.ok) return showUrlNote(entry, INVALID_LINK, "err");
-  }
-  showUrlNote(entry, "");
 }
 
 // Twitch Ambassadors (from the helper's list) get the Ambassador box ticked
@@ -1771,7 +1629,7 @@ async function loadAmbassadors() {
 const streamerNames = new Map(); // link -> { name, others }
 function applyPeople(entry, link, data) {
   if ((splitLinks(entry.input.value)[0] || "") !== link) return;
-  if (data.name) {
+  if (data.name && !entry.nameEdited) {
     entry.streamerName = data.name;
     autoAmbassador(entry, data.name);
     if (entry.repaintPill) entry.repaintPill();
@@ -1783,7 +1641,11 @@ function updateStreamerName(entry) {
   const link = splitLinks(entry.input.value)[0] || "";
   const kind = linkKind(link);
   const known = streamerNames.get(link);
-  entry.streamerName = (known && known.name) || (kind.type === "twitch" ? kind.login : null);
+  if (link !== entry.lastLink) {
+    entry.lastLink = link;
+    entry.nameEdited = false; // a different link: read the name from it again
+  }
+  if (!entry.nameEdited) entry.streamerName = (known && known.name) || (kind.type === "twitch" ? kind.login : "");
   if (kind.type === "twitch") autoAmbassador(entry, kind.login);
   if (entry.repaintPill) entry.repaintPill();
   if (!link || kind.type === "x" || !isClipUrl(link)) {
@@ -1835,7 +1697,7 @@ function setExtraPills(entry, link, others) {
       entry.extras.splice(entry.extras.indexOf(extra), 1);
       entry.extrasLabel.style.display = entry.extras.length ? "block" : "none";
     };
-    buildPillControls(extra);
+    buildManualPill(extra, { onRemove: extra.onRemove });
     autoAmbassador(extra, extra.login);
     entry.block.appendChild(extra.pillControls);
     entry.block.appendChild(extra.palette);
@@ -1935,7 +1797,7 @@ function addClipRow(c) {
   for (const inp of [entry.startInput, entry.minutesInput]) inp.addEventListener("input", () => refreshPillRows());
   block.appendChild(entry.ytRow);
 
-  block.appendChild(buildPillControls(entry));
+  block.appendChild(buildManualPill(entry, { optional: true, startOn: true }));
   block.appendChild(entry.palette);
   // X / YouTube clips have no Twitch streamer to read a name from: a pill can be added by hand.
   entry.manual = { initialColor: entry.initialColor };
@@ -2116,6 +1978,7 @@ function collectSequences() {
           colorName: r.pill.color.name,
           ambassador: r.pill.ambassador,
           duplicate: !!r.duplicate,
+          name: r.nameEdited ? r.streamerName : "", // only a name changed by hand overrides the one Twitch reports
         },
         extraPills: r.extras
           .filter((x) => x.pill.on && x.streamerName)
