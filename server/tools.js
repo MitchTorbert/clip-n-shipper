@@ -27,11 +27,16 @@ function fromNpm(name) {
 }
 
 function resolveTool(name) {
+  // An installed helper (CNS_BIN is set) uses the tools it brought along first, so what runs on an
+  // editor's Mac or PC is exactly what was tested. A developer copy uses whatever is on the system.
   if (bundledBinDir()) {
     for (const file of exeNames(name)) {
       const own = path.join(bundledBinDir(), file);
       if (fs.existsSync(own)) return own;
     }
+    const npm = fromNpm(name);
+    if (npm && fs.existsSync(npm)) return npm;
+    return resolveOnPath(name);
   }
   const found = resolveOnPath(name);
   if (found) return found;

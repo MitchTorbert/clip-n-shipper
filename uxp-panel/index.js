@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b39";
+const BUILD = "b40";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -900,8 +900,10 @@ function shortError(error) {
   if (/live stream/i.test(e)) return "Live stream, not a clip";
   if (/isn't a twitch clip|not a clip/i.test(e)) return "Not a clip link";
   if (/time(d)? ?out/i.test(e)) return "Timed out";
+  if (/ffmpeg is not installed|ffmpeg not found/i.test(e)) return "Downloader can't find ffmpeg";
+  if (/not a bot|confirm you.re not/i.test(e)) return "YouTube wants proof you're not a bot";
   if (/private|unavailable|not found|404/i.test(e)) return "Clip unavailable";
-  return e ? e.slice(0, 40) : "Download failed";
+  return e ? e.replace(/^ERROR:\s*/i, "").slice(0, 70) : "Download failed";
 }
 
 function shortLink(url) {

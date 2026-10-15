@@ -40,3 +40,12 @@ one-line installer; updating = running it again. (Claude sessions can push but c
   .ccx this way is UNVERIFIED (a first pilot editor is testing); a .ccx on the Desktop is the fallback.
 - Never bypass bot checks (streamscharts.com is behind Cloudflare; the Ambassador list now comes from
   Twitch's own GQL instead).
+
+## Testing like an editor (learned the hard way)
+An installed helper runs with a bare PATH and its own tools (yt-dlp in the bin folder, ffmpeg/ffprobe from
+node_modules). Anything that works only because Homebrew's tools are on the developer's PATH will fail for
+editors (YouTube failed this way: yt-dlp couldn't see ffmpeg). To test faithfully on a Mac that has the
+installer's copy: run the repo's `server/index.js` with
+`env -i HOME=$HOME PATH="$I/bin:$I/node/bin:/usr/bin:/bin" CNS_BIN="$I/bin" CNS_PORT=8935 NODE_PATH="$I/app/server/node_modules" "$I/node/bin/node" server/index.js`
+(I = ~/Library/Application Support/Clip-n-Shipper). With CNS_BIN set, tools.js prefers the bundled tools.
+YouTube section downloads occasionally return 403; downloadClip retries (3 tries, web-only client on retries).

@@ -4,6 +4,7 @@
 // as a shell command.
 
 const { execFile } = require("child_process");
+const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
@@ -33,6 +34,41 @@ function parseRate(text) {
   const m = String(text || "").match(/^(\d+)\/(\d+)$/);
   if (m && Number(m[2])) return Number(m[1]) / Number(m[2]);
   return parseFloat(text) || 0;
+}
+
+// yt-dlp needs ffmpeg itself (to cut out a stretch of a YouTube video, and to join the video
+// and audio streams). It looks for ffmpeg on PATH, but the installer keeps its own copy inside
+// the helper's packages, where yt-dlp can't see it. So hand it a small folder holding links to
+// the ffmpeg and ffprobe the helper found, and point yt-dlp there with --ffmpeg-location.
+function ffmpegLocationArgs(tools) {
+  if (!tools.ffmpeg) return [];
+  const dir = path.join(os.tmpdir(), "clip-n-shipper-tools");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+    for (const [name, src] of [["ffmpeg", tools.ffmpeg], ["ffprobe", tools.ffprobe]]) {
+      if (!src) continue;
+      const dest = path.join(dir, name + (process.platform === "win32" ? ".exe" : ""));
+      try {
+        if (fs.existsSync(dest) && fs.statSync(dest).size === fs.statSync(src).size) continue; // already there
+      } catch (e) {
+        // fall through and (re)make it
+      }
+      fs.rmSync(dest, { force: true });
+      try {
+        fs.symlinkSync(src, dest); // Windows usually can't make links without special rights...
+      } catch (e) {
+        fs.copyFileSync(src, dest); // ...so it copies the file instead
+        try {
+          fs.chmodSync(dest, 0o755);
+        } catch (e2) {
+          // not needed on Windows
+        }
+      }
+    }
+    return ["--ffmpeg-location", dir];
+  } catch (e) {
+    return [];
+  }
 }
 
 function sanitize(name) {
@@ -245,13 +281,29 @@ async function downloadClip(tools, url, destDir, onProgress, signal, opts = {}) 
         "--no-playlist",
         "--socket-timeout",
         "20",
+        ...ffmpegLocationArgs(tools),
         "-o",
         destPath,
         url,
       ]
-    : ["-f", "best", "--merge-output-format", "mp4", "--no-warnings", "--no-playlist", "--socket-timeout", "20", "--max-filesize", "500M", "-o", destPath, url];
+    : ["-f", "best", "--merge-output-format", "mp4", "--no-warnings", "--no-playlist", "--socket-timeout", "20", "--max-filesize", "500M", ...ffmpegLocationArgs(tools), "-o", destPath, url];
   onProgress(parsed.isYouTube ? `Downloading ${clock(section.start)}–${clock(section.end)} of ${streamer}'s video…` : `Downloading ${streamer}'s clip…`);
-  await run(tools.ytDlp, args, { signal, timeout: parsed.isYouTube ? YOUTUBE_DOWNLOAD_TIMEOUT_MS : DOWNLOAD_TIMEOUT_MS });
+  // YouTube sometimes answers "403 Forbidden" for a stretch of a video it served a moment ago. A new
+  // attempt gets fresh links, so those (and similar passing network errors) are retried.
+  const attempts = parsed.isYouTube ? 3 : 1;
+  for (let attempt = 1; ; attempt++) {
+    try {
+      // A retry asks YouTube for ordinary web links (the kind that failed came from its visionOS client).
+      const tryArgs = attempt === 1 || !parsed.isYouTube ? args : [...args.slice(0, -1), "--extractor-args", "youtube:player_client=web,mweb", args[args.length - 1]];
+      await run(tools.ytDlp, tryArgs, { signal, timeout: parsed.isYouTube ? YOUTUBE_DOWNLOAD_TIMEOUT_MS : DOWNLOAD_TIMEOUT_MS });
+      break;
+    } catch (e) {
+      const passing = /403|forbidden|HTTP error|temporar|connection (reset|refused)|timed out/i.test(String(e.message));
+      if (attempt >= attempts || !passing || (signal && signal.aborted)) throw e;
+      onProgress(`YouTube refused that attempt (try ${attempt} of ${attempts}). Trying again…`);
+      await new Promise((resolve) => setTimeout(resolve, 2000 * attempt));
+    }
+  }
 
   if (!fs.existsSync(destPath)) {
     // With a section download yt-dlp can tack the time range onto the file name; pick that file up.
