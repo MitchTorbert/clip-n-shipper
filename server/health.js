@@ -9,7 +9,7 @@ const YTDLP_WARN_DAYS = 60;
 
 function runOut(bin, args) {
   return new Promise((resolve) => {
-    execFile(bin, args, { timeout: 15000 }, (err, stdout) => resolve(err ? null : String(stdout).trim()));
+    execFile(bin, args, { timeout: 60000 }, (err, stdout) => resolve(err ? null : String(stdout).trim()));
   });
 }
 
@@ -28,15 +28,30 @@ async function runHealth(tools, ctx) {
 
   add("ok", "Helper", `v${ctx.version || "?"}, running (Node ${process.version})`);
 
-  if (!tools.ytDlp) add("err", "yt-dlp (downloader)", "not found — install with: brew install yt-dlp");
+  if (!tools.ytDlp) add("err", "yt-dlp (downloader)", "not found. Run the Clip-n-Shipper installer again");
   else {
     const v = await runOut(tools.ytDlp, ["--version"]);
     const m = v && v.match(/^(\d{4})\.(\d{2})\.(\d{2})/);
     if (!m) add("warn", "yt-dlp (downloader)", "installed, but its version couldn't be read");
     else {
+      // Compare with the newest release (an old-looking version is fine if it IS the newest).
+      let latest = null;
+      const rel = await fetchOk("https://api.github.com/repos/yt-dlp/yt-dlp/releases/latest", { headers: { "User-Agent": "clip-n-shipper" } });
+      if (rel.ok) {
+        try {
+          latest = String((await rel.res.json()).tag_name || "").trim();
+        } catch (e) {
+          // fall back to the age rule
+        }
+      }
       const days = Math.floor((Date.now() - Date.UTC(+m[1], +m[2] - 1, +m[3])) / 86400000);
-      if (days > YTDLP_WARN_DAYS) add("warn", "yt-dlp (downloader)", `${v} is ${days} days old — update it: brew upgrade yt-dlp`);
-      else add("ok", "yt-dlp (downloader)", `${v} (${days} days old)`);
+      const stamp = ctx.ytdlpStamp;
+      const auto = ctx.ytdlpBundled ? (stamp ? `; checked for updates ${Math.max(0, Math.round((Date.now() - stamp.at) / 3600000))}h ago` : "; checks for updates by itself") : "";
+      if (latest && latest === v) add("ok", "yt-dlp (downloader)", `${v}, the newest${auto}`);
+      else if (latest) {
+        add("warn", "yt-dlp (downloader)", ctx.ytdlpBundled ? `${v}; ${latest} is out and will install itself within a day${auto}` : `${v}; ${latest} is out. Update it: brew upgrade yt-dlp`);
+      } else if (days > YTDLP_WARN_DAYS) add("warn", "yt-dlp (downloader)", `${v} is ${days} days old (couldn't check for a newer one)`);
+      else add("ok", "yt-dlp (downloader)", `${v}${auto}`);
     }
   }
   add(tools.ffmpeg ? "ok" : "err", "ffmpeg", tools.ffmpeg ? "found" : "not found — install with: brew install ffmpeg");

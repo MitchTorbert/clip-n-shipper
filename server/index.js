@@ -19,6 +19,7 @@ const { renderPill, pillFps } = require("./pill");
 const { refreshIfStale } = require("./ambassadors");
 const { runHealth } = require("./health");
 const platform = require("./platform");
+const ytdlpUpdate = require("./ytdlpUpdate");
 
 const PORT = Number(process.env.CNS_PORT) || 8934;
 // The release number (the VERSION file ships next to server/ and assets/).
@@ -521,6 +522,8 @@ const server = http.createServer(async (req, res) => {
     const assetsDir = path.join(__dirname, "..", "assets");
     const rows = await runHealth(checkAllTools(), {
       version: HELPER_VERSION,
+      ytdlpBundled: !!process.env.CNS_BIN,
+      ytdlpStamp: process.env.CNS_BIN ? ytdlpUpdate.readStamp() : null,
       pillService: PILL_SERVICE_URL,
       ambassadorCount: () => readAmbassadors().length,
       h264Preset: findH264Preset,
@@ -618,6 +621,7 @@ const server = http.createServer(async (req, res) => {
         sendJson(res, 400, { error: "No projectDir provided." });
         return;
       }
+      if (ytdlpUpdating) await ytdlpUpdating; // a download shouldn't start while its downloader is being swapped
       const jobId = makeJobId();
       const job = { status: "running", log: [], error: null, manifest: null };
       jobs.set(jobId, job);
@@ -733,6 +737,18 @@ if (process.env.CLIPNSHIP_AUTORESTART === "1") {
     }
   }, 2000);
 }
+
+// Keep yt-dlp current (installed copies only; at most once a day; never during a download).
+let ytdlpUpdating = null;
+function maybeUpdateYtDlp() {
+  if (ytdlpUpdating || controllers.size > 0) return;
+  ytdlpUpdating = ytdlpUpdate
+    .updateYtDlp(checkAllTools(), { log: (m) => console.log(m) })
+    .catch((e) => console.log("yt-dlp update check failed: " + e.message))
+    .finally(() => (ytdlpUpdating = null));
+}
+setTimeout(maybeUpdateYtDlp, 30 * 1000);
+setInterval(maybeUpdateYtDlp, 4 * 60 * 60 * 1000);
 
 // Keep the Ambassador list current (it refreshes at most every few days).
 refreshIfStale((m) => console.log(m));
