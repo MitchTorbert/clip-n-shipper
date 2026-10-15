@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b40";
+const BUILD = "b41";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -65,6 +65,12 @@ document.getElementById("build").textContent = (PANEL_VERSION ? "v" + PANEL_VERS
 // (errors, and messages marked `notice`) is kept in `notices` and shown in the report.
 let logLines = [];
 const notices = []; // { text, level }
+// Breadcrumbs for the UXP log file only (not the panel): if Premiere itself ever crashes, the last
+// "step:" line before the crash says which Premiere call it was.
+function step(msg) {
+  console.log("[clip-n-ship] step: " + msg);
+}
+
 function log(msg, cls, notice) {
   logLines.push(msg);
   if (cls === "err" || notice) notices.push({ text: msg, level: cls === "err" ? "err" : "warn" });
@@ -546,9 +552,11 @@ function sharpOverBlurTransform(srcW, srcH, seq, bottomCrop) {
 // ---- Premiere-side build ----
 
 async function findMotionComponent(trackItem) {
+  step("getComponentChain");
   const chain = await trackItem.getComponentChain();
   const count = chain.getComponentCount();
   for (let i = 0; i < count; i++) {
+    step("component " + i + " of " + count + ": getMatchName");
     const c = chain.getComponentAtIndex(i);
     const matchName = await c.getMatchName();
     if (matchName === "AE.ADBE Motion") return c;
@@ -590,8 +598,10 @@ async function applyFraming(project, trackItem, transform, seq) {
   if (!numbers.every(Number.isFinite)) {
     throw new Error("framing numbers came out invalid — the helper may be running old code; restart it and try again");
   }
+  step("applyFraming: find Motion");
   const motion = await findMotionComponent(trackItem);
   if (!motion) throw new Error("Couldn't find the Motion effect on this clip");
+  step("applyFraming: read Motion settings");
   const { posParam, scaleParam, crop } = findParamsOnMotion(motion);
 
   // Position is a fraction of the sequence frame (0-1, origin top-left), not pixels.
@@ -609,6 +619,7 @@ async function applyFraming(project, trackItem, transform, seq) {
     }
   }
 
+  step("applyFraming: write settings");
   // Create the set-value actions inside the transaction, as the earlier working version did.
   let success = false;
   project.lockedAccess(() => {
@@ -646,6 +657,7 @@ async function addGaussianBlur(project, trackItem, amount) {
   }
   if (!component) throw new Error("this version of Premiere didn't offer a Gaussian Blur effect");
 
+  step("addGaussianBlur: add effect");
   const chain = await trackItem.getComponentChain();
   let added = false;
   project.lockedAccess(() => {
@@ -655,6 +667,7 @@ async function addGaussianBlur(project, trackItem, amount) {
   });
   if (!added) throw new Error("Premiere rejected adding the blur effect");
 
+  step("addGaussianBlur: find effect again");
   // Look the effect up again on the clip, then set its strength.
   const after = await trackItem.getComponentChain();
   let blur = null;
@@ -721,6 +734,7 @@ async function ensureFolders(project, folderNames) {
 // Drops a pill on V3 at the given time, centered at its native size (the user
 // positions pills by hand). Overwrite, so nothing else in the sequence shifts.
 async function placePill(project, sequence, pillItem, timeSeconds, videoTrackIndex) {
+  step("placePill at " + timeSeconds.toFixed(1) + "s");
   const editor = ppro.SequenceEditor.getEditor(sequence);
   const time = ppro.TickTime.createWithSeconds(timeSeconds);
   let success = false;
@@ -755,7 +769,9 @@ function sequenceFpsFor(clips) {
 }
 
 async function buildSequence(project, seq, fps) {
+  step("createSequence");
   const sequence = await project.createSequence(seq.name);
+  step("sequence.getSettings");
   const settings = await sequence.getSettings();
   const rect = new ppro.RectF();
   rect.width = seq.width;
@@ -785,7 +801,9 @@ async function buildSequence(project, seq, fps) {
   });
   if (!success) throw new Error(`Couldn't set the sequence to ${seq.width}x${seq.height}`);
 
+  step("setActiveSequence");
   await project.setActiveSequence(sequence);
+  step("sequence ready");
   return sequence;
 }
 
@@ -814,10 +832,16 @@ async function createVideoOnlyCopy(project, folders, projectItem, name) {
 // both layers can share the one project item instead of a "(video only)" copy.
 // Returns true when the audio is really gone.
 async function removeExtraAudio(project, sequence, audioTrackIndex) {
-  const trackAfter = async () => (await sequence.getAudioTrack(audioTrackIndex)).getTrackItems(ppro.Constants.TrackItemType.CLIP, false);
+  const trackAfter = async () => {
+    step("getAudioTrack " + audioTrackIndex);
+    const track = await sequence.getAudioTrack(audioTrackIndex);
+    step("getTrackItems (audio " + audioTrackIndex + ")");
+    return track.getTrackItems(ppro.Constants.TrackItemType.CLIP, false);
+  };
   const before = await trackAfter();
   const item = before[before.length - 1];
   if (!item) return false;
+  step("removeExtraAudio: remove item");
   const editor = ppro.SequenceEditor.getEditor(sequence);
   let ok = false;
   // The selection only exists inside this callback, so the removal is built and run in here.
@@ -840,6 +864,7 @@ let extraAudioRemovalBroken = false; // once it fails, the rest of the run falls
 async function insertClips(project, sequence, gameplaySource, gameplayAudioTrack, facecamSource, timeSeconds) {
   const editor = ppro.SequenceEditor.getEditor(sequence);
   const time = ppro.TickTime.createWithSeconds(timeSeconds);
+  step("insertClips: insert at " + timeSeconds.toFixed(1) + "s" + (facecamSource ? " (two layers)" : ""));
   let success = false;
   project.lockedAccess(() => {
     success = project.executeTransaction((compound) => {
@@ -852,7 +877,9 @@ async function insertClips(project, sequence, gameplaySource, gameplayAudioTrack
   if (!success) throw new Error("Premiere rejected inserting this clip");
 
   const lastItem = async (trackIndex) => {
+    step("getVideoTrack " + trackIndex);
     const track = await sequence.getVideoTrack(trackIndex);
+    step("getTrackItems (video " + trackIndex + ")");
     const items = track.getTrackItems(ppro.Constants.TrackItemType.CLIP, false);
     return items[items.length - 1];
   };
@@ -1090,7 +1117,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
       : wantsFacecam
       ? " (no facecam found — full frame, flagged)"
       : "";
-    log(`Placing ${clip.streamer || "clip"} at ${t.toFixed(1)}s${placing}${capCrop ? " — cropping out Twitch captions" : ""}…`);
+    log(`Placing ${clip.displayName || clip.streamer || "clip"} at ${t.toFixed(1)}s${placing}${capCrop ? " — cropping out Twitch captions" : ""}…`);
     let gameplayItem, facecamItem;
     try {
       ({ gameplayItem, facecamItem } = await insertClips(
@@ -1102,6 +1129,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
       t += clip.durationSeconds || 0;
       continue;
     }
+    step("clip " + clipName + ": inserted");
     if (sharesFootage) {
       let removed = false;
       try {
@@ -1116,6 +1144,7 @@ async function buildProject(project, manifest, seq, clearFirst) {
       }
     }
 
+    step("clip " + clipName + ": formatting");
     if (hasFacecam) {
       const layout = layoutFor(clip.srcWidth, clip.srcHeight, clip.facecam, seq);
       try {

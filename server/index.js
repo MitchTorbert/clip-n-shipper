@@ -296,7 +296,9 @@ async function runJob(job, clipSpecs, projectDir, signal, options) {
       }, signal, { startSeconds: spec.startSeconds, lengthSeconds: spec.lengthSeconds });
 
       // Rename the download to "<Streamer> <number>".
-      const display = clip.channelName || clip.streamer;
+      // A YouTube / X clip with a pill is named after the pill's name (typed by hand); otherwise the channel / streamer.
+      const typedName = !clip.channelName && spec.pill && spec.pill.enabled && spec.pill.name ? spec.pill.name : "";
+      const display = typedName || clip.channelName || clip.streamer;
       const key = display.toLowerCase();
       let number = (counts.get(key) || 0) + 1;
       let target;
