@@ -29,6 +29,8 @@ const bodySegmentation = require("@tensorflow-models/body-segmentation");
 const SAMPLE_COUNT = 8;
 const GRID_COLS = 6;
 const GRID_ROWS = 4;
+const WEAK_MIN_HITS = 3; // proximity fallback: at least this many frames...
+const WEAK_MIN_FRACTION = 0.3; // ...and this share of them
 const MIN_FRAME_FRACTION = 0.5; // face must show up in at least half the sampled frames
 const MIN_CONFIDENCE = 0.85;
 const FULLSCREEN_FACE_HEIGHT = 0.14; // a centered face at least this tall (share of frame height) = full-screen camera
@@ -207,6 +209,51 @@ function clusterFace(perFrameFaces, W, H) {
     hits: best.length,
     // how much the faces in this spot differ: one streamer on a webcam barely changes,
     // different people walking through the same spot (IRL footage) do
+    sizeRatio: Math.max(...heights) / Math.max(1, Math.min(...heights)),
+    drift: Math.hypot(Math.max(...cxs) - Math.min(...cxs), Math.max(...cys) - Math.min(...cys)) / Math.max(1, avg("w")),
+  };
+}
+
+// Fallback when the grid vote finds nothing: a face that drifts a little (a streamer leaning,
+// covering their face, laughing) can straddle a grid line and split its votes between two cells.
+// This groups detections by distance instead, one vote per frame.
+function clusterByProximity(perFrameFaces, W, H) {
+  let best = null;
+  for (const faces of perFrameFaces) {
+    for (const seed of faces) {
+      const sx = seed.x + seed.w / 2;
+      const sy = seed.y + seed.h / 2;
+      const reach = seed.w * 0.8;
+      const matched = [];
+      for (const frame of perFrameFaces) {
+        let near = null;
+        let nearD = Infinity;
+        for (const f of frame) {
+          const d = Math.hypot(f.x + f.w / 2 - sx, f.y + f.h / 2 - sy);
+          if (d <= reach && d < nearD) {
+            near = f;
+            nearD = d;
+          }
+        }
+        if (near) matched.push(near);
+      }
+      if (!best || matched.length > best.length) best = matched;
+    }
+  }
+  if (!best || perFrameFaces.length === 0 || best.length < WEAK_MIN_HITS || best.length / perFrameFaces.length < WEAK_MIN_FRACTION) return null;
+  const avg = (k) => best.reduce((s, f) => s + f[k], 0) / best.length;
+  const heights = best.map((f) => f.h);
+  const cxs = best.map((f) => f.x + f.w / 2);
+  const cys = best.map((f) => f.y + f.h / 2);
+  return {
+    x: avg("x"),
+    y: avg("y"),
+    w: avg("w"),
+    h: avg("h"),
+    hits: best.length,
+    // seen in fewer frames than a normal match needs (a streamer covering their face, looking away):
+    // only trusted when the webcam's own border lines are clear
+    weak: best.length / perFrameFaces.length < MIN_FRAME_FRACTION,
     sizeRatio: Math.max(...heights) / Math.max(1, Math.min(...heights)),
     drift: Math.hypot(Math.max(...cxs) - Math.min(...cxs), Math.max(...cys) - Math.min(...cys)) / Math.max(1, avg("w")),
   };
@@ -575,6 +622,11 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
         }
       }
       face = clusterFace(finer, frames[0].w, frames[0].h);
+      if (!face) {
+        // Both passes together, grouped by distance rather than by grid cell.
+        const combined = perFrameFaces.map((faces, i) => (i % 2 === 0 && finer[i / 2] ? faces.concat(finer[i / 2]) : faces));
+        face = clusterByProximity(combined, frames[0].w, frames[0].h);
+      }
     }
     if (!face) return { found: false, reason: "no face seen consistently" };
     if (face.sizeRatio > SAME_FACE_MAX_SIZE_RATIO || face.drift > SAME_FACE_MAX_DRIFT) {
@@ -582,6 +634,9 @@ async function findFacecam(tools, videoPath, durationSeconds, onProgress, signal
     }
     onProgress && onProgress("Finding the webcam edges…");
     const result = await buildResult(frames, face, onProgress, signal);
+    if (result.found && face.weak && !isStrongWebcam(result)) {
+      return { found: false, reason: "a face seen only now and then, and no clear webcam border around it" };
+    }
     if (result.found && bigFaces && !isStrongWebcam(result)) {
       return { found: false, reason: "a large face on screen — looks like a full-screen camera (IRL / just chatting)" };
     }

@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b41";
+const BUILD = "b42";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -768,6 +768,47 @@ function sequenceFpsFor(clips) {
   return rates.length ? Math.min(...rates) : null;
 }
 
+// A new sequence keeps the timecode display of Premiere's default preset (29.97 drop-frame), so
+// after the frame rate changes the timeline would count seconds at the wrong speed (a 20 s edit
+// reads as 40-50 s). The display format has to follow the frame rate. Premiere numbers its
+// timecode formats 100=24, 101=25, 102=29.97 drop, 103=29.97 non-drop, 104=30, 105=50,
+// 106=59.94 drop, 107=59.94 non-drop, 108=60 (the same numbers its project files use), and the
+// panel's named constants cover 23.976 / 25 / 29.97. The numbers are only used after the named
+// 29.97 constants confirm that numbering.
+const DISPLAY_CODES = { 24: 100, 25: 101, 29.97: 102, 30: 104, 50: 105, 59.94: 106, 60: 108 };
+async function matchTimecodeDisplay(settings, fps) {
+  try {
+    if (typeof settings.setVideoDisplayFormat !== "function") return;
+    const T = (ppro.Constants && ppro.Constants.VideoDisplayFormatType) || {};
+    step("timecode display constants: " + JSON.stringify(T));
+    let before = null;
+    try {
+      before = typeof settings.getVideoDisplayFormat === "function" ? await settings.getVideoDisplayFormat() : null;
+    } catch (e) {
+      before = null;
+    }
+    let target = null;
+    if (fps === 23.976) target = T.FPS_23_976;
+    else if (fps === 25 && T.FPS_25 !== undefined) target = T.FPS_25;
+    else if (fps === 29.97) target = T.FPS_29_97;
+    else if (DISPLAY_CODES[fps] !== undefined && T.FPS_29_97 === 102 && T.FPS_29_97_NON_DROP === 103) target = DISPLAY_CODES[fps];
+    if (target === null || target === undefined) {
+      log(`Couldn't match the timecode display to ${fps} fps; set it in Sequence Settings > Video > Display Format if the timeline counts too fast.`, "warn", true);
+      return;
+    }
+    await settings.setVideoDisplayFormat(target);
+    let after = null;
+    try {
+      after = typeof settings.getVideoDisplayFormat === "function" ? await settings.getVideoDisplayFormat() : null;
+    } catch (e) {
+      after = null;
+    }
+    log(`Timecode display set to match ${fps} fps (was ${before}, now ${after}).`);
+  } catch (e) {
+    log(`Couldn't match the timecode display to the frame rate (${e && e.message ? e.message : e}).`, "warn", true);
+  }
+}
+
 async function buildSequence(project, seq, fps) {
   step("createSequence");
   const sequence = await project.createSequence(seq.name);
@@ -788,6 +829,7 @@ async function buildSequence(project, seq, fps) {
       }
       await settings.setVideoFrameRate(rate);
       log(`Sequence frame rate set to ${fps} fps to match the footage.`);
+      await matchTimecodeDisplay(settings, fps);
     } catch (e) {
       log(`Couldn't set the sequence frame rate (${e && e.message ? e.message : e}); it uses Premiere's default.`, "warn", true);
     }
