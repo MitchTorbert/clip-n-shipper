@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b42";
+const BUILD = "b43";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -26,7 +26,7 @@ let lastPillColor = PILL_COLOR_FAMILIES[2][1];
 // `facecam: false` means a plain stringout: no facecam search, split, or crop.
 const DIMENSIONS = [
   { label: "9x16", icon: "916", iw: 9, ih: 16, width: 1080, height: 1920, facecam: true },
-  { label: "4x5", icon: "45", iw: 13, ih: 16, width: 1080, height: 1350, facecam: true },
+  { label: "4x5", icon: "45", iw: 13, ih: 16, width: 1080, height: 1440, facecam: true },
   { label: "16x9", icon: "169", iw: 21, ih: 12, width: 1920, height: 1080, facecam: false },
   { label: "3x4", icon: "34", iw: 14, ih: 18, width: 1080, height: 1440, facecam: true }, // drawn with the X logo
 ];
