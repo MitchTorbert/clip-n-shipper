@@ -1,7 +1,7 @@
 const ppro = require("premierepro");
 
 // Bump on every edit so the panel header shows the reload actually took.
-const BUILD = "b43";
+const BUILD = "b44";
 const HELPER_BASE = "http://localhost:8934";
 // The facecam section is sized to the whole webcam at full width, so none of
 // the webcam gets trimmed; gameplay gets the rest. The facecam never takes
@@ -2145,6 +2145,19 @@ async function onSetupClick() {
         continue;
       }
       plan.push({ ...seq, clips });
+    }
+    if (!plan.length && collectSequences().every((q) => q.blank)) {
+      // Nothing was entered: just get the project ready (folders, sounds, overlays, subtitle style).
+      stopRequested = false;
+      if (clearMode) {
+        log("Clearing the project…");
+        await clearProject(project);
+      }
+      log("No links entered, so just setting up the project folders and shared files…");
+      const ready = await prepareProjectFolders(project, dirname(project.path), clearMode);
+      if (ready) log("Done. The project has its folders, sound effects, overlays and subtitle style. Paste links any time to add clips.", "ok");
+      else log("Couldn't finish setting up the folders. See the note above.", "err");
+      return;
     }
     if (!plan.length) {
       log("Paste at least one Twitch clip or X post link first (twitch.tv/<channel>/clip/<name> or x.com/<user>/status/<id>).", "err");
